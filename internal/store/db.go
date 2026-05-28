@@ -1,0 +1,149 @@
+package store
+
+import (
+	"aaru/internal/model"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+)
+
+type DBStore struct{ db *gorm.DB }
+
+func NewDBStore(dsn string) (*DBStore, error) {
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Warn),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := db.AutoMigrate(
+		&model.User{}, &model.Role{}, &model.Permission{},
+		&model.Release{}, &model.ReleaseStage{},
+		&model.PromotionBlueprint{}, &model.BlueprintNode{}, &model.BlueprintEdge{},
+	); err != nil {
+		return nil, err
+	}
+	return &DBStore{db: db}, nil
+}
+
+func (s *DBStore) DB() *gorm.DB { return s.db }
+
+// ========== User ==========
+func (s *DBStore) CreateUser(u *model.User) error { return s.db.Create(u).Error }
+func (s *DBStore) GetUserByUsername(name string) (*model.User, error) {
+	var u model.User
+	err := s.db.Where("username = ?", name).Preload("Roles").First(&u).Error
+	if err != nil { return nil, err }
+	return &u, nil
+}
+func (s *DBStore) GetUserWithRoles(id uint) (*model.User, error) {
+	var u model.User
+	err := s.db.Preload("Roles").First(&u, id).Error
+	if err != nil { return nil, err }
+	return &u, nil
+}
+func (s *DBStore) ListUsers() ([]model.User, error) {
+	var users []model.User
+	err := s.db.Preload("Roles").Find(&users).Error
+	return users, err
+}
+func (s *DBStore) SetUserRoles(userID uint, roleIDs []uint) error {
+	var u model.User
+	if err := s.db.First(&u, userID).Error; err != nil { return err }
+	var roles []model.Role
+	if err := s.db.Where("id IN ?", roleIDs).Find(&roles).Error; err != nil { return err }
+	return s.db.Model(&u).Association("Roles").Replace(&roles)
+}
+
+// ========== Role ==========
+func (s *DBStore) CreateRole(r *model.Role) error { return s.db.Create(r).Error }
+func (s *DBStore) ListRoles() ([]model.Role, error) {
+	var roles []model.Role
+	err := s.db.Preload("Permissions").Find(&roles).Error
+	return roles, err
+}
+func (s *DBStore) GetRole(id uint) (*model.Role, error) {
+	var r model.Role
+	err := s.db.Preload("Permissions").First(&r, id).Error
+	if err != nil { return nil, err }
+	return &r, nil
+}
+func (s *DBStore) SetRolePermissions(roleID uint, perms []model.Permission) error {
+	s.db.Where("role_id = ?", roleID).Delete(&model.Permission{})
+	for i := range perms { perms[i].RoleID = roleID }
+	if len(perms) > 0 { return s.db.Create(&perms).Error }
+	return nil
+}
+
+// ========== Release ==========
+func (s *DBStore) CreateRelease(r *model.Release) error { return s.db.Create(r).Error }
+func (s *DBStore) ListReleases(page, pageSize int) ([]model.Release, int64, error) {
+	var list []model.Release
+	var total int64
+	s.db.Model(&model.Release{}).Count(&total)
+	offset := (page-1)*pageSize
+	err := s.db.Preload("Stages").Preload("CreatedBy").Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&list).Error
+	return list, total, err
+}
+func (s *DBStore) GetReleaseWithStages(id uint) (*model.Release, error) {
+	var r model.Release
+	err := s.db.Preload("Stages").Preload("CreatedBy").First(&r, id).Error
+	if err != nil { return nil, err }
+	return &r, nil
+}
+func (s *DBStore) CreateReleaseStage(stage *model.ReleaseStage) error { return s.db.Create(stage).Error }
+func (s *DBStore) GetStagesByStatus(status string) ([]model.ReleaseStage, error) {
+	var stages []model.ReleaseStage
+	err := s.db.Where("status = ?", status).Preload("ApprovedBy").Find(&stages).Error
+	return stages, err
+}
+
+// ========== Blueprint ==========
+func (s *DBStore) CreateBlueprint(bp *model.PromotionBlueprint) error { return s.db.Create(bp).Error }
+func (s *DBStore) UpdateBlueprint(bp *model.PromotionBlueprint) error { return s.db.Save(bp).Error }
+func (s *DBStore) GetBlueprint(id uint) (*model.PromotionBlueprint, error) {
+	var bp model.PromotionBlueprint
+	if err := s.db.First(&bp, id).Error; err != nil { return nil, err }
+	return &bp, nil
+}
+func (s *DBStore) ListBlueprints() ([]model.PromotionBlueprint, error) {
+	var bps []model.PromotionBlueprint
+	err := s.db.Find(&bps).Error
+	return bps, err
+}
+func (s *DBStore) DeleteBlueprint(id uint) error {
+	tx := s.db.Begin()
+	tx.Where("blueprint_id = ?", id).Delete(&model.BlueprintNode{})
+	tx.Where("blueprint_id = ?", id).Delete(&model.BlueprintEdge{})
+	tx.Delete(&model.PromotionBlueprint{}, id)
+	tx.Commit()
+	return nil
+}
+
+// Node operations
+func (s *DBStore) CreateNodes(nodes []model.BlueprintNode) error {
+	if len(nodes) == 0 { return nil }
+	return s.db.Create(&nodes).Error
+}
+func (s *DBStore) DeleteNodesByBlueprint(bpID uint) error {
+	return s.db.Where("blueprint_id = ?", bpID).Delete(&model.BlueprintNode{}).Error
+}
+func (s *DBStore) GetBlueprintNodes(bpID uint) ([]model.BlueprintNode, error) {
+	var nodes []model.BlueprintNode
+	err := s.db.Where("blueprint_id = ?", bpID).Find(&nodes).Error
+	return nodes, err
+}
+
+// Edge operations
+func (s *DBStore) CreateEdges(edges []model.BlueprintEdge) error {
+	if len(edges) == 0 { return nil }
+	return s.db.Create(&edges).Error
+}
+func (s *DBStore) DeleteEdgesByBlueprint(bpID uint) error {
+	return s.db.Where("blueprint_id = ?", bpID).Delete(&model.BlueprintEdge{}).Error
+}
+func (s *DBStore) GetBlueprintEdges(bpID uint) ([]model.BlueprintEdge, error) {
+	var edges []model.BlueprintEdge
+	err := s.db.Where("blueprint_id = ?", bpID).Find(&edges).Error
+	return edges, err
+}

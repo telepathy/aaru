@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aaru - 登录</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="login-page">
+    <div class="login-bg">
+        <div class="login-grid"></div>
+    </div>
+    <div class="login-container">
+        <div class="login-card">
+            <div class="login-header">
+                <div class="login-logo">
+                    <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+                        <rect x="3" y="3" width="22" height="22" rx="5" stroke="currentColor" stroke-width="2.5"/>
+                        <path d="M9 14l4 4 6-6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </div>
+                <h1 class="login-title">Aaru</h1>
+                <p class="login-desc">全量应用发布工具箱</p>
+            </div>
+            <form class="login-form" action="/auth/callback" method="POST">
+                <label class="form-label">选择用户登录</label>
+                <div class="user-selector">
+                    {{range .Users}}
+                    <label class="user-option">
+                        <input type="radio" name="username" value="{{.}}" required>
+                        <div class="user-option-content">
+                            <div class="user-option-avatar">{{upperFirst .}}</div>
+                            <span>{{.}}</span>
+                        </div>
+                    </label>
+                    {{end}}
+                </div>
+                <button type="submit" class="btn-login">登录 →</button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>
