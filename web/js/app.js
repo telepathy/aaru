@@ -244,48 +244,100 @@ async function submitRelease(e) {
 }
 
 // ===== Deploy Units Browse =====
+let duSelectedCode = null;
+let duSiloOptions = [];   // derived from DevOps API
+let duSystemOptions = []; // derived from DevOps API
+let duCache = {};         // code -> DevOpsDUItem
+let duAll = [];           // all DUs from API
+
 async function renderDeployUnits(body) {
   showLoading(body);
   try {
-    const [envsData, systemsData] = await Promise.all([
-      api('/environments').catch(()=>({envs:[]})),
-      api('/systems').catch(()=>({systems:[]}))
-    ]);
-    const envs = envsData.envs||[];
-    const systems = systemsData.systems||[];
+    // Fetch all DUs from DevOps API to derive filter options (no DMDB)
+    const allData = await api('/du-list');
+    duAll = allData.deploy_units||[];
 
-    body.innerHTML = `<div class="card"><div class="card-header"><div class="card-title">部署单元浏览</div></div><div class="card-body">
-      <div class="filter-bar">
-        <select class="form-control" id="du-env" onchange="loadDUTable()"><option value="">全部环境</option>${envs.map(e=>`<option value="${escapeHtml(e.Env)}">${escapeHtml(e.name)}</option>`).join('')}</select>
-        <select class="form-control" id="du-system" onchange="loadDUTable()"><option value="">全部系统</option>${systems.map(s=>`<option value="${escapeHtml(s.code||s.id)}">${escapeHtml(s.name)}</option>`).join('')}</select>
+    // Extract unique silos and systems from DU list
+    const siloSet = new Set();
+    const sysSet = new Set();
+    duAll.forEach(d => {
+      if (d.silo) siloSet.add(d.silo);
+      if (d.system) sysSet.add(d.system);
+    });
+    duSiloOptions = [...siloSet].sort();
+    duSystemOptions = [...sysSet].sort();
+
+    body.innerHTML = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;height:calc(100vh - 140px)">
+      <div style="display:flex;flex-direction:column;min-height:0">
+        <div class="card" style="flex:1;display:flex;flex-direction:column;min-height:0">
+          <div class="card-header"><div class="card-title">部署单元列表</div></div>
+          <div class="filter-bar" style="padding:12px 20px">
+            <select class="form-control" id="du-silo" onchange="loadDUList()"><option value="">全部竖井</option>${duSiloOptions.map(c=>`<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}</select>
+            <select class="form-control" id="du-system" onchange="loadDUList()"><option value="">全部系统</option>${duSystemOptions.map(c=>`<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}</select>
+          </div>
+          <div id="du-list" style="flex:1;overflow-y:auto;padding:0 20px 20px"><div class="loading-state"><div class="spinner"></div></div></div>
+        </div>
       </div>
-      <div id="du-table"><div class="loading-state"><div class="spinner"></div></div></div>
-    </div></div>`;
-    loadDUTable();
+      <div style="min-height:0">
+        <div class="card" style="height:100%;display:flex;flex-direction:column">
+          <div class="card-header"><div class="card-title" id="du-detail-title">部署单元详情</div></div>
+          <div id="du-detail" style="flex:1;overflow-y:auto;padding:20px"><div class="empty-state"><p>点击左侧部署单元查看详情</p></div></div>
+        </div>
+      </div>
+    </div>`;
+    renderDUList(duAll);
   } catch(e) { body.innerHTML = '<div class="empty-state"><p>加载失败: '+escapeHtml(e.message)+'</p></div>'; }
 }
 
-window.loadDUTable = async function() {
-  const container = document.getElementById('du-table');
-  const env = document.getElementById('du-env').value;
-  const system = document.getElementById('du-system').value;
-  showLoading(container);
-  try {
-    const params = new URLSearchParams();
-    if (env) params.set('env', env);
-    if (system) params.set('system', system);
-    const data = await api('/deploy-units?'+params.toString());
-    const dus = data.deploy_units||[];
-    if (dus.length===0) { container.innerHTML = '<div class="empty-state"><p>无匹配的部署单元</p></div>'; return; }
-    container.innerHTML = `<table class="data-table"><thead><tr><th>编码</th><th>应用名称</th><th>环境</th><th>系统</th><th>竖井</th><th>版本</th></tr></thead><tbody>${dus.map(d=>`<tr>
-      <td><code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-size:12px">${escapeHtml(d.biz_serial)}</code></td>
-      <td>${escapeHtml(d.app_name||'')}</td>
-      <td>${escapeHtml(d.Env||'')}</td>
-      <td>${escapeHtml(d.system_name||d.system||'')}</td>
-      <td>${escapeHtml(d.silo_code||'')}</td>
-      <td>${escapeHtml(d.artifact_version||'')}</td>
-    </tr>`).join('')}</tbody></table>`;
-  } catch(e) { container.innerHTML = '<div class="empty-state"><p>加载失败: '+escapeHtml(e.message)+'</p></div>'; }
+function renderDUList(dus) {
+  const container = document.getElementById('du-list');
+  if (!container) return;
+  // Update cache
+  duCache = {};
+  (dus||[]).forEach(d => { duCache[d.code] = d; });
+  if (!dus||dus.length===0) { container.innerHTML = '<div class="empty-state"><p>无匹配的部署单元</p></div>'; return; }
+  container.innerHTML = dus.map(d=>{
+    const sel = d.code===duSelectedCode?'selected':'';
+    return `<div class="du-list-item ${sel}" onclick="loadDUDetail('${escapeHtml(d.code)}')" data-code="${escapeHtml(d.code)}">
+      <div class="du-item-code">${escapeHtml(d.code)}</div>
+      <div class="du-item-meta">Silo: ${escapeHtml(d.silo||'-')} / System: ${escapeHtml(d.system||'-')}</div>
+    </div>`;
+  }).join('');
+}
+
+window.loadDUList = function() {
+  const silo = document.getElementById('du-silo')?.value||'';
+  const system = document.getElementById('du-system')?.value||'';
+  let dus = duAll;
+  if (silo) dus = dus.filter(d => d.silo === silo);
+  if (system) dus = dus.filter(d => d.system === system);
+  renderDUList(dus);
+};
+
+window.loadDUDetail = function(code) {
+  duSelectedCode = code;
+  const title = document.getElementById('du-detail-title');
+  const detail = document.getElementById('du-detail');
+  if (title) title.textContent = code;
+
+  // Highlight selected item
+  document.querySelectorAll('.du-list-item').forEach(el=>{
+    el.classList.toggle('selected', el.dataset.code===code);
+  });
+
+  const d = duCache[code];
+  if (!d) {
+    if (detail) detail.innerHTML = '<div class="empty-state"><p>未找到该部署单元</p></div>';
+    return;
+  }
+  if (detail) {
+    detail.innerHTML = `<div class="du-detail-card">
+      <div class="du-detail-field"><label>部署单元编码</label><span><code>${escapeHtml(d.code)}</code></span></div>
+      <div class="du-detail-field"><label>所属竖井 (Silo)</label><span>${escapeHtml(d.silo||'-')}</span></div>
+      <div class="du-detail-field"><label>所属系统 (System)</label><span>${escapeHtml(d.system||'-')}</span></div>
+      <div class="du-detail-field"><label>代码仓库</label><span style="word-break:break-all;font-size:12px">${escapeHtml(d.repo||'-')}</span></div>
+    </div>`;
+  }
 };
 
 // ===== Approvals =====

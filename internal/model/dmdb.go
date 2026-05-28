@@ -59,3 +59,31 @@ type DeployUnitInfo struct {
 	SystemName      string    `json:"SystemName,omitempty"`
 	BizSystem       RefObject `json:"belong_System"`
 }
+
+// DevOpsDUListResponse DevOps API list-du 响应
+type DevOpsDUListResponse struct {
+	Code    int            `json:"code"`
+	Message string         `json:"message"`
+	Data    []DevOpsDUItem `json:"data"`
+}
+
+// DevOpsDUItem DevOps API返回的部署单元列表项
+type DevOpsDUItem struct {
+	Code   string `json:"code"`
+	Silo   string `json:"silo"`
+	System string `json:"system"`
+	Repo   string `json:"repo"`
+}
+
+// DUConfigSnapshot 单个部署单元在某个环境中的配置快照（用于跨环境对比）
+type DUConfigSnapshot struct {
+	Env             string `json:"env"`
+	EnvName         string `json:"env_name"`
+	AppName         string `json:"app_name"`
+	ArtifactVersion string `json:"artifact_version"`
+	ArtifactId      string `json:"artifact_id"`
+	Description     string `json:"description"`
+	DuTypeCode      string `json:"du_type_code"`
+	SystemName      string `json:"system_name"`
+	SiloCode        string `json:"silo_code"`
+}

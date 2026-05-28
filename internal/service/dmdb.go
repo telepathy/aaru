@@ -11,14 +11,16 @@ import (
 )
 
 type DMDBClient struct {
-	baseURL string
-	client  *resty.Client
+	baseURL    string
+	devopsURL  string
+	client     *resty.Client
 }
 
-func NewDMDBClient(baseURL string) *DMDBClient {
+func NewDMDBClient(baseURL, devopsURL string) *DMDBClient {
 	return &DMDBClient{
-		baseURL: baseURL,
-		client:  resty.New(),
+		baseURL:   baseURL,
+		devopsURL: devopsURL,
+		client:    resty.New(),
 	}
 }
 
@@ -136,6 +138,76 @@ func (d *DMDBClient) GetEnvDetail(code string) (*model.EnvInfo, error) {
 		return nil, fmt.Errorf("env %s not found", code)
 	}
 	return &env, nil
+}
+
+// ListAllDUs 从DevOps API获取所有部署单元列表，支持按竖井和系统筛选
+func (d *DMDBClient) ListAllDUs(silo, system string) ([]model.DevOpsDUItem, error) {
+	path := "/api/v1/devops/list-du/"
+	params := make(map[string]string)
+	if silo != "" {
+		params["silo"] = silo
+	}
+	if system != "" {
+		params["system"] = system
+	}
+	var resp model.DevOpsDUListResponse
+	if err := d.getFromDevops(path, params, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Data, nil
+}
+
+// CompareDUConfig 获取某个DU在所有DMDB环境中的配置，用于跨环境对比
+func (d *DMDBClient) CompareDUConfig(duCode string) ([]model.DUConfigSnapshot, error) {
+	envs, err := d.ListEnvironments()
+	if err != nil {
+		return nil, fmt.Errorf("list environments: %w", err)
+	}
+
+	var snapshots []model.DUConfigSnapshot
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	for _, env := range envs {
+		wg.Add(1)
+		go func(envCode, envName string) {
+			defer wg.Done()
+			du, err := d.GetDeployUnitByCode(envCode, duCode)
+			if err != nil {
+				return // 该环境没有此DU，跳过
+			}
+			mu.Lock()
+			snapshots = append(snapshots, model.DUConfigSnapshot{
+				Env:             envCode,
+				EnvName:         envName,
+				AppName:         du.AppName,
+				ArtifactVersion: du.ArtifactVersion,
+				ArtifactId:      du.ArtifactId,
+				Description:     du.Description,
+				DuTypeCode:      du.DuTypeCode,
+				SystemName:      du.SystemName,
+				SiloCode:        du.SiloCode,
+			})
+			mu.Unlock()
+		}(env.Env, env.Name)
+	}
+	wg.Wait()
+	return snapshots, nil
+}
+
+func (d *DMDBClient) getFromDevops(path string, params map[string]string, result interface{}) error {
+	req := d.client.R().SetResult(result)
+	for k, v := range params {
+		req.SetQueryParam(k, v)
+	}
+	resp, err := req.Get(d.devopsURL + path)
+	if err != nil {
+		return fmt.Errorf("GET %s: %w", path, err)
+	}
+	if resp.StatusCode() != 200 {
+		return fmt.Errorf("GET %s: status=%d", path, resp.StatusCode())
+	}
+	return nil
 }
 
 // GetAllDeployUnits 查询所有环境的部署单元

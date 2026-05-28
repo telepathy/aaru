@@ -59,6 +59,8 @@ func RegisterRoutes(
 		api.GET("/systems", dmdbHandler.ListSystems)
 		api.GET("/deploy-units", dmdbHandler.QueryDeployUnits)
 		api.GET("/deploy-units/:code", dmdbHandler.GetDeployUnit)
+		api.GET("/deploy-units/:code/compare", dmdbHandler.CompareDUConfig)
+		api.GET("/du-list", dmdbHandler.ListAllDUs)
 
 		// 发布单
 		api.POST("/releases", releaseHandler.CreateRelease)

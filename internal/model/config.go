@@ -8,15 +8,20 @@ import (
 )
 
 type Config struct {
-	ServerHost  string      `yaml:"server_host,omitempty"`
-	DbPath      string      `yaml:"db_path,omitempty"`
-	JwtSecret   string      `yaml:"jwt_secret,omitempty"`
-	DMDB        DMDBConfig  `yaml:"dmdb"`
-	Gitlab      GitlabMock  `yaml:"gitlab"`
-	PromotePlan []EnvConfig `yaml:"promote_plan"`
+	ServerHost  string       `yaml:"server_host,omitempty"`
+	DbPath      string       `yaml:"db_path,omitempty"`
+	JwtSecret   string       `yaml:"jwt_secret,omitempty"`
+	DMDB        DMDBConfig   `yaml:"dmdb"`
+	DevOps      DevOpsConfig `yaml:"devops"`
+	Gitlab      GitlabMock   `yaml:"gitlab"`
+	PromotePlan []EnvConfig  `yaml:"promote_plan"`
 }
 
 type DMDBConfig struct {
+	ServerAddress string `yaml:"server_address"`
+}
+
+type DevOpsConfig struct {
 	ServerAddress string `yaml:"server_address"`
 }
 
@@ -58,6 +63,9 @@ func getDefaultConfig() *Config {
 		JwtSecret:  "aaru-dev-secret-change-in-production",
 		DMDB: DMDBConfig{
 			ServerAddress: "http://127.0.0.1:3632",
+		},
+		DevOps: DevOpsConfig{
+			ServerAddress: "http://127.0.0.1:8733",
 		},
 		Gitlab: GitlabMock{
 			Enabled: true,

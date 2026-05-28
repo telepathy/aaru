@@ -67,6 +67,31 @@ func (h *DMDBHandler) QueryDeployUnits(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"deploy_units": dus})
 }
 
+// ListAllDUs 从DevOps API获取所有部署单元，支持按竖井和系统筛选
+func (h *DMDBHandler) ListAllDUs(c *gin.Context) {
+	silo := c.Query("silo")
+	system := c.Query("system")
+	dus, err := h.dmdb.ListAllDUs(silo, system)
+	if err != nil {
+		log.Printf("list all dus from devops: %v", err)
+		c.JSON(http.StatusOK, gin.H{"deploy_units": []interface{}{}})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"deploy_units": dus})
+}
+
+// CompareDUConfig 对比某个DU在所有环境中的配置差异
+func (h *DMDBHandler) CompareDUConfig(c *gin.Context) {
+	code := c.Param("code")
+	snapshots, err := h.dmdb.CompareDUConfig(code)
+	if err != nil {
+		log.Printf("compare du config: %v", err)
+		c.JSON(http.StatusOK, gin.H{"snapshots": []interface{}{}})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"snapshots": snapshots})
+}
+
 // GetDeployUnit 获取部署单元详情
 func (h *DMDBHandler) GetDeployUnit(c *gin.Context) {
 	code := c.Param("code")
