@@ -180,7 +180,16 @@ textarea.form-control{resize:vertical;min-height:80px}
 
 .du-compare-table { font-size: 12px; }
 .du-compare-table th { white-space: nowrap; }
-.du-compare-table td { max-width: 200px; word-break: break-all; }
+.du-compare-table td { max-width: 300px; word-break: break-all; white-space: pre-wrap; }
+.du-compare-table { border-collapse: separate; }
+.du-compare-table th:first-child,
+.du-compare-table td:first-child {
+  position: sticky; left: 0; z-index: 2;
+  background: #fff;
+  border-right: 2px solid var(--border);
+}
+.du-compare-table tbody td:first-child { background: #fef3c7; }
+.du-compare-table thead th:first-child { z-index: 3; background: #fafafa; }
 .du-diff-row td { background: #fffbeb; }
 .du-diff-row td:first-child { background: #fef3c7; font-weight: 600; }
 .du-detail-card { display: flex; flex-direction: column; gap: 16px; }

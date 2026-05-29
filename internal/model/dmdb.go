@@ -75,15 +75,9 @@ type DevOpsDUItem struct {
 	Repo   string `json:"repo"`
 }
 
-// DUConfigSnapshot 单个部署单元在某个环境中的配置快照（用于跨环境对比）
+// DUConfigSnapshot 单个部署单元在某个环境中的完整配置快照（用于跨环境对比）
 type DUConfigSnapshot struct {
-	Env             string `json:"env"`
-	EnvName         string `json:"env_name"`
-	AppName         string `json:"app_name"`
-	ArtifactVersion string `json:"artifact_version"`
-	ArtifactId      string `json:"artifact_id"`
-	Description     string `json:"description"`
-	DuTypeCode      string `json:"du_type_code"`
-	SystemName      string `json:"system_name"`
-	SiloCode        string `json:"silo_code"`
+	Env     string            `json:"env"`
+	EnvName string            `json:"env_name"`
+	Fields  map[string]string `json:"fields"`
 }

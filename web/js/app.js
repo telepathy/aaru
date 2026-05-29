@@ -249,6 +249,7 @@ let duSiloOptions = [];   // derived from DevOps API
 let duSystemOptions = []; // derived from DevOps API
 let duCache = {};         // code -> DevOpsDUItem
 let duAll = [];           // all DUs from API
+let duSnapshots = [];     // last compared snapshots
 
 async function renderDeployUnits(body) {
   showLoading(body);
@@ -267,9 +268,9 @@ async function renderDeployUnits(body) {
     duSiloOptions = [...siloSet].sort();
     duSystemOptions = [...sysSet].sort();
 
-    body.innerHTML = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;height:calc(100vh - 140px)">
-      <div style="display:flex;flex-direction:column;min-height:0">
-        <div class="card" style="flex:1;display:flex;flex-direction:column;min-height:0">
+    body.innerHTML = `<div id="du-grid" style="display:grid;grid-template-columns:1fr 2fr;gap:20px;height:calc(100vh - 140px)">
+      <div style="display:flex;flex-direction:column;min-height:0;min-width:0">
+        <div class="card" style="flex:1;display:flex;flex-direction:column;min-height:0;min-width:0">
           <div class="card-header"><div class="card-title">部署单元列表</div></div>
           <div class="filter-bar" style="padding:12px 20px">
             <select class="form-control" id="du-silo" onchange="loadDUList()"><option value="">全部竖井</option>${duSiloOptions.map(c=>`<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}</select>
@@ -278,10 +279,10 @@ async function renderDeployUnits(body) {
           <div id="du-list" style="flex:1;overflow-y:auto;padding:0 20px 20px"><div class="loading-state"><div class="spinner"></div></div></div>
         </div>
       </div>
-      <div style="min-height:0">
-        <div class="card" style="height:100%;display:flex;flex-direction:column">
+      <div style="min-height:0;min-width:0">
+        <div class="card" style="height:100%;display:flex;flex-direction:column;min-width:0;overflow:hidden">
           <div class="card-header"><div class="card-title" id="du-detail-title">部署单元详情</div></div>
-          <div id="du-detail" style="flex:1;overflow-y:auto;padding:20px"><div class="empty-state"><p>点击左侧部署单元查看详情</p></div></div>
+          <div id="du-detail" style="flex:1;overflow-y:auto;padding:20px;min-width:0"><div class="empty-state"><p>点击左侧部署单元查看详情</p></div></div>
         </div>
       </div>
     </div>`;
@@ -316,6 +317,8 @@ window.loadDUList = function() {
 
 window.loadDUDetail = async function(code) {
   duSelectedCode = code;
+  const grid = document.getElementById('du-grid');
+  if (grid) grid.style.gridTemplateColumns = '1fr 2fr';
   const title = document.getElementById('du-detail-title');
   const detail = document.getElementById('du-detail');
   if (title) title.textContent = code;
@@ -343,16 +346,20 @@ window.loadDUDetail = async function(code) {
   // Fetch version comparison from DMDB
   try {
     const data = await api('/deploy-units/'+encodeURIComponent(code)+'/compare');
-    const snapshots = data.snapshots||[];
-    if (snapshots.length > 0) {
-      html += `<div style="margin-top:20px"><h4 style="font-size:13px;font-weight:600;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--border)">各环境版本对比</h4>
+    duSnapshots = data.snapshots||[];
+    if (duSnapshots.length > 0) {
+      const f = s => k => (s.fields||{})[k]||'-';
+      html += `<div style="margin-top:20px;display:flex;align-items:center;justify-content:space-between">
+        <h4 style="font-size:13px;font-weight:600;padding-bottom:8px">各环境版本对比</h4>
+        <button class="btn btn-sm btn-primary" onclick="showDUCompareDetail()">详细比对</button>
+      </div>
         <table class="data-table du-compare-table">
           <thead><tr><th>环境</th><th>制品版本 (ArtifactVersion)</th><th>制品ID</th><th>应用名称</th></tr></thead>
-          <tbody>${snapshots.map(s=>`<tr>
+          <tbody>${duSnapshots.map(s=>`<tr>
             <td><strong>${escapeHtml(s.env_name||s.env)}</strong><br><span style="font-size:10px;color:var(--text-muted)">${escapeHtml(s.env)}</span></td>
-            <td><code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-size:12px">${escapeHtml(s.artifact_version||'-')}</code></td>
-            <td>${escapeHtml(s.artifact_id||'-')}</td>
-            <td>${escapeHtml(s.app_name||'-')}</td>
+            <td><code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-size:12px">${escapeHtml(f(s)('ArtifactVersion'))}</code></td>
+            <td>${escapeHtml(f(s)('ArtifactId'))}</td>
+            <td>${escapeHtml(f(s)('AppName'))}</td>
           </tr>`).join('')}</tbody>
         </table></div>`;
     } else {
@@ -363,6 +370,62 @@ window.loadDUDetail = async function(code) {
   }
 
   if (detail) detail.innerHTML = html;
+};
+
+window.showDUCompareDetail = function() {
+  const grid = document.getElementById('du-grid');
+  if (grid) grid.style.gridTemplateColumns = '240px 1fr';
+  const detail = document.getElementById('du-detail');
+  const title = document.getElementById('du-detail-title');
+  if (!detail) return;
+  if (duSnapshots.length === 0) {
+    detail.innerHTML = '<div class="empty-state"><p>无对比数据</p></div>';
+    return;
+  }
+
+  const code = duSelectedCode || '';
+  if (title) title.textContent = code + ' - 详细比对';
+
+  const envs = duSnapshots.map(s=>({code:s.env, name:s.env_name}));
+
+  // Collect all field keys, skip env identifiers and metadata
+  const skipKeys = new Set(['id','Env','classCode','biz_serial','SiloCode','System']);
+  const allKeys = new Set();
+  duSnapshots.forEach(s => Object.keys(s.fields||{}).forEach(k => { if (!skipKeys.has(k)) allKeys.add(k); }));
+
+  // Only show fields where values differ across environments
+  const diffFields = [...allKeys].filter(key => {
+    const vals = duSnapshots.map(s=>String((s.fields||{})[key]||''));
+    return new Set(vals).size > 1;
+  });
+
+  if (diffFields.length === 0) {
+    detail.innerHTML = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <span style="font-size:13px;color:var(--text-muted)">对比 ${duSnapshots.length} 个环境</span>
+      <button class="btn btn-sm btn-secondary" onclick="loadDUDetail('${escapeHtml(code)}')">返回概览</button>
+    </div>
+    <div class="empty-state"><p>所有环境配置完全一致，无差异</p></div>`;
+    return;
+  }
+
+  const val = (s, key) => {
+    const raw = String((s.fields||{})[key]||'-');
+    return raw.split(' ').map(escapeHtml).join('<span style="background:#fde68a">&nbsp;</span>');
+  };
+
+  detail.innerHTML = `<div style="margin-bottom:12px;display:flex;align-items:center;justify-content:space-between">
+    <span style="font-size:13px;color:var(--text-muted)">只展示 ${duSnapshots.length} 个环境中存在差异的 ${diffFields.length} 个配置项</span>
+    <button class="btn btn-sm btn-secondary" onclick="loadDUDetail('${escapeHtml(code)}')">返回概览</button>
+  </div>
+  <div style="overflow-x:auto;width:100%">
+    <table class="data-table du-compare-table" style="min-width:600px;table-layout:auto">
+      <thead><tr><th style="min-width:120px">配置项</th>${envs.map(e=>`<th>${escapeHtml(e.name)}<br><span style="font-weight:400;font-size:10px;color:var(--text-muted)">${escapeHtml(e.code)}</span></th>`).join('')}</tr></thead>
+      <tbody>${diffFields.map(key=>`<tr class="du-diff-row">
+        <td><strong style="font-size:12px;word-break:break-all">${escapeHtml(key)}</strong></td>
+        ${duSnapshots.map(s=>`<td style="font-size:12px;word-break:break-all;max-width:300px;white-space:pre-wrap">${val(s,key)}</td>`).join('')}
+      </tr>`).join('')}</tbody>
+    </table>
+  </div>`;
 };
 
 // ===== Approvals =====

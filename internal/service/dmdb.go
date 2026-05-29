@@ -157,7 +157,49 @@ func (d *DMDBClient) ListAllDUs(silo, system string) ([]model.DevOpsDUItem, erro
 	return resp.Data, nil
 }
 
-// CompareDUConfig 获取某个DU在所有DMDB环境中的配置，用于跨环境对比
+// getRawDU 获取单个DU的完整原始JSON数据
+func (d *DMDBClient) getRawDU(env, code string) (map[string]interface{}, error) {
+	var raw map[string]interface{}
+	if err := d.get("/api/get-du/"+env+"/"+code, &raw); err != nil {
+		return nil, err
+	}
+	if raw["biz_serial"] == nil || raw["biz_serial"] == "" {
+		return nil, fmt.Errorf("deploy unit %s/%s not found", env, code)
+	}
+	return raw, nil
+}
+
+// flattenFields 将map[string]interface{}扁平化为map[string]string，嵌套值序列化为JSON
+func flattenFields(raw map[string]interface{}) map[string]string {
+	fields := make(map[string]string)
+	for k, v := range raw {
+		switch val := v.(type) {
+		case string:
+			fields[k] = val
+		case float64:
+			fields[k] = fmt.Sprintf("%v", val)
+		case bool:
+			if val {
+				fields[k] = "true"
+			} else {
+				fields[k] = "false"
+			}
+		case nil:
+			fields[k] = ""
+		default:
+			// 嵌套结构（数组、对象等）→ JSON字符串
+			b, err := json.Marshal(val)
+			if err != nil {
+				fields[k] = fmt.Sprintf("%v", val)
+			} else {
+				fields[k] = string(b)
+			}
+		}
+	}
+	return fields
+}
+
+// CompareDUConfig 获取某个DU在所有DMDB环境中的完整配置，用于跨环境对比
 func (d *DMDBClient) CompareDUConfig(duCode string) ([]model.DUConfigSnapshot, error) {
 	envs, err := d.ListEnvironments()
 	if err != nil {
@@ -172,21 +214,16 @@ func (d *DMDBClient) CompareDUConfig(duCode string) ([]model.DUConfigSnapshot, e
 		wg.Add(1)
 		go func(envCode, envName string) {
 			defer wg.Done()
-			du, err := d.GetDeployUnitByCode(envCode, duCode)
+			raw, err := d.getRawDU(envCode, duCode)
 			if err != nil {
-				return // 该环境没有此DU，跳过
+				return
 			}
+			fields := flattenFields(raw)
 			mu.Lock()
 			snapshots = append(snapshots, model.DUConfigSnapshot{
-				Env:             envCode,
-				EnvName:         envName,
-				AppName:         du.AppName,
-				ArtifactVersion: du.ArtifactVersion,
-				ArtifactId:      du.ArtifactId,
-				Description:     du.Description,
-				DuTypeCode:      du.DuTypeCode,
-				SystemName:      du.SystemName,
-				SiloCode:        du.SiloCode,
+				Env:     envCode,
+				EnvName: envName,
+				Fields:  fields,
 			})
 			mu.Unlock()
 		}(env.Env, env.Name)
