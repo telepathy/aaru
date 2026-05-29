@@ -372,6 +372,8 @@ window.loadDUDetail = async function(code) {
   if (detail) detail.innerHTML = html;
 };
 
+let duSelectedEnvs = []; // currently enabled env indices
+
 window.showDUCompareDetail = function() {
   const grid = document.getElementById('du-grid');
   if (grid) grid.style.gridTemplateColumns = '240px 1fr';
@@ -386,25 +388,56 @@ window.showDUCompareDetail = function() {
   const code = duSelectedCode || '';
   if (title) title.textContent = code + ' - 详细比对';
 
-  const envs = duSnapshots.map(s=>({code:s.env, name:s.env_name}));
+  // All envs selected by default
+  duSelectedEnvs = duSnapshots.map((_, i) => i);
 
-  // Collect all field keys, skip env identifiers and metadata
+  // Build env selector bar + table container, then render table
+  detail.innerHTML = `<div id="du-compare-toolbar" style="margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11px">
+      <span style="color:var(--text-muted);margin-right:4px">环境:</span>
+      ${duSnapshots.map((e,i)=>`<label class="du-env-chip" id="du-env-chip-${i}">
+        <input type="checkbox" checked onchange="toggleCompareEnv(${i})">
+        <span>${escapeHtml(e.env_name||e.env)}</span>
+      </label>`).join('')}
+    </div>
+    <button class="btn btn-sm btn-secondary" onclick="loadDUDetail('${escapeHtml(code)}')">返回概览</button>
+  </div>
+  <div id="du-compare-table-wrap" style="overflow-x:auto;width:100%"></div>`;
+  renderCompareTable();
+};
+
+window.toggleCompareEnv = function(idx) {
+  const chip = document.getElementById('du-env-chip-'+idx);
+  const checked = chip.querySelector('input').checked;
+  if (checked) {
+    duSelectedEnvs.push(idx);
+    duSelectedEnvs.sort((a,b)=>a-b);
+  } else {
+    duSelectedEnvs = duSelectedEnvs.filter(i=>i!==idx);
+  }
+  renderCompareTable();
+};
+
+function renderCompareTable() {
+  const wrap = document.getElementById('du-compare-table-wrap');
+  if (!wrap) return;
+  const selected = duSelectedEnvs.map(i=>duSnapshots[i]);
+  if (selected.length < 2) {
+    wrap.innerHTML = '<div class="empty-state"><p>请至少选择2个环境进行比对</p></div>';
+    return;
+  }
+
   const skipKeys = new Set(['id','Env','classCode','biz_serial','SiloCode','System']);
   const allKeys = new Set();
-  duSnapshots.forEach(s => Object.keys(s.fields||{}).forEach(k => { if (!skipKeys.has(k)) allKeys.add(k); }));
+  selected.forEach(s => Object.keys(s.fields||{}).forEach(k => { if (!skipKeys.has(k)) allKeys.add(k); }));
 
-  // Only show fields where values differ across environments
   const diffFields = [...allKeys].filter(key => {
-    const vals = duSnapshots.map(s=>String((s.fields||{})[key]||''));
+    const vals = selected.map(s=>String((s.fields||{})[key]||''));
     return new Set(vals).size > 1;
   });
 
   if (diffFields.length === 0) {
-    detail.innerHTML = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-      <span style="font-size:13px;color:var(--text-muted)">对比 ${duSnapshots.length} 个环境</span>
-      <button class="btn btn-sm btn-secondary" onclick="loadDUDetail('${escapeHtml(code)}')">返回概览</button>
-    </div>
-    <div class="empty-state"><p>所有环境配置完全一致，无差异</p></div>`;
+    wrap.innerHTML = '<div class="empty-state"><p>所选环境配置完全一致，无差异</p></div>';
     return;
   }
 
@@ -413,20 +446,15 @@ window.showDUCompareDetail = function() {
     return raw.split(' ').map(escapeHtml).join('<span style="background:#fde68a">&nbsp;</span>');
   };
 
-  detail.innerHTML = `<div style="margin-bottom:12px;display:flex;align-items:center;justify-content:space-between">
-    <span style="font-size:13px;color:var(--text-muted)">只展示 ${duSnapshots.length} 个环境中存在差异的 ${diffFields.length} 个配置项</span>
-    <button class="btn btn-sm btn-secondary" onclick="loadDUDetail('${escapeHtml(code)}')">返回概览</button>
-  </div>
-  <div style="overflow-x:auto;width:100%">
+  wrap.innerHTML = `<div style="margin-bottom:8px;font-size:12px;color:var(--text-muted)">${selected.length} 个环境 / ${diffFields.length} 个差异项</div>
     <table class="data-table du-compare-table" style="min-width:600px;table-layout:auto">
-      <thead><tr><th style="min-width:120px">配置项</th>${envs.map(e=>`<th>${escapeHtml(e.name)}<br><span style="font-weight:400;font-size:10px;color:var(--text-muted)">${escapeHtml(e.code)}</span></th>`).join('')}</tr></thead>
+      <thead><tr><th style="min-width:120px">配置项</th>${selected.map(e=>`<th>${escapeHtml(e.env_name||e.env)}<br><span style="font-weight:400;font-size:10px;color:var(--text-muted)">${escapeHtml(e.env)}</span></th>`).join('')}</tr></thead>
       <tbody>${diffFields.map(key=>`<tr class="du-diff-row">
         <td><strong style="font-size:12px;word-break:break-all">${escapeHtml(key)}</strong></td>
-        ${duSnapshots.map(s=>`<td style="font-size:12px;word-break:break-all;max-width:300px;white-space:pre-wrap">${val(s,key)}</td>`).join('')}
+        ${selected.map(s=>`<td style="font-size:12px;word-break:break-all;max-width:300px;white-space:pre-wrap">${val(s,key)}</td>`).join('')}
       </tr>`).join('')}</tbody>
-    </table>
-  </div>`;
-};
+    </table>`;
+}
 
 // ===== Approvals =====
 async function renderApprovals(body) {

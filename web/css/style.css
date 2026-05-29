@@ -197,3 +197,14 @@ textarea.form-control{resize:vertical;min-height:80px}
 .du-detail-field label { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; }
 .du-detail-field span { font-size: 14px; color: var(--text); }
 .du-detail-field code { background: #f4f4f5; padding: 2px 8px; border-radius: 4px; font-size: 13px; }
+
+.du-env-chip { display: inline-flex; align-items: center; cursor: pointer; }
+.du-env-chip input { display: none; }
+.du-env-chip span {
+  padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 500;
+  border: 1px solid var(--border); background: #fff; color: var(--text-secondary);
+  transition: all .15s;
+}
+.du-env-chip input:checked + span {
+  background: var(--accent); color: #fff; border-color: var(--accent);
+}

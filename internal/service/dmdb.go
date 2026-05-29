@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
+	"strings"
 	"sync"
 
 	"aaru/internal/model"
@@ -229,7 +231,162 @@ func (d *DMDBClient) CompareDUConfig(duCode string) ([]model.DUConfigSnapshot, e
 		}(env.Env, env.Name)
 	}
 	wg.Wait()
+
+	// 后处理：InitDb/InitDbAuth/InitDbFinal 如果仅tag不同则简化展示
+	collapseInitTagOnly(snapshots)
+
 	return snapshots, nil
+}
+
+// collapseInitTagOnly 检查 InitDb / InitDbAuth / InitDbFinal 三个配置项，
+// 如果各环境间仅有代码仓库URL中的tag版本不同（且tag与ArtifactVersion一致），
+// 则替换为简要提示而非完整JSON。
+func collapseInitTagOnly(snapshots []model.DUConfigSnapshot) {
+	initKeys := []string{"InitDb", "InitDbAuth", "InitDbFinal"}
+	for _, key := range initKeys {
+		if !tryCollapseInitKey(snapshots, key) {
+			continue
+		}
+	}
+}
+
+func tryCollapseInitKey(snapshots []model.DUConfigSnapshot, key string) bool {
+	type initItem map[string]interface{}
+	var parsed [][]initItem
+	tags := make([]string, len(snapshots))
+
+	for i, s := range snapshots {
+		raw, ok := s.Fields[key]
+		if !ok || raw == "" || raw == "[]" || raw == "null" {
+			return false
+		}
+		var items []initItem
+		if err := json.Unmarshal([]byte(raw), &items); err != nil {
+			return false
+		}
+		if len(items) == 0 {
+			return false
+		}
+		// 收集ArtifactVersion用于后续校验
+		if av, ok := s.Fields["ArtifactVersion"]; ok {
+			tags[i] = av
+		}
+		parsed = append(parsed, items)
+	}
+
+	if len(parsed) < 2 {
+		return false
+	}
+
+	// 检查所有环境数组长度一致
+	n := len(parsed[0])
+	for _, p := range parsed {
+		if len(p) != n {
+			return false
+		}
+	}
+
+	// 逐元素比对：每个位置的元素结构一致，仅source URL中的tag不同
+	tagSet := make(map[string]bool)
+	for idx := 0; idx < n; idx++ {
+		var baseItem initItem
+		var baseSource string
+		for i, p := range parsed {
+			item := p[idx]
+			// 深拷贝第一项作为基准
+			if i == 0 {
+				baseItem = make(initItem)
+				for k, v := range item {
+					baseItem[k] = v
+				}
+				if s, ok := item["source"].(string); ok {
+					baseSource = s
+				}
+				continue
+			}
+			// 比较结构：除source外所有字段必须完全一致
+			source, hasSource := item["source"].(string)
+			if !hasSource {
+				return false
+			}
+			for k, v := range item {
+				if k == "source" {
+					continue
+				}
+				bv, ok := baseItem[k]
+				if !ok {
+					return false
+				}
+				if fmt.Sprintf("%v", v) != fmt.Sprintf("%v", bv) {
+					return false
+				}
+			}
+			// 检查source仅tag不同
+			tag, same := extractTagAndCompare(baseSource, source)
+			if !same {
+				return false
+			}
+			if tag != "" {
+				tagSet[tag] = true
+			}
+			// 校验tag与ArtifactVersion一致
+			av := tags[i]
+			if av == "" {
+				av = tags[0]
+			}
+			if tag != "" && av != "" && tag != av {
+				return false
+			}
+		}
+	}
+
+	// 所有检查通过，替换为简要提示
+	tagList := make([]string, 0, len(tagSet))
+	for t := range tagSet {
+		tagList = append(tagList, t)
+	}
+	sort.Strings(tagList)
+	summary := fmt.Sprintf("仅tag版本不同 (%d个环境共%d个不同tag)", len(snapshots), len(tagList))
+	for _, s := range snapshots {
+		if av, ok := s.Fields["ArtifactVersion"]; ok {
+			s.Fields[key+"_Note"] = summary + " | 当前环境: " + s.EnvName + " tag=" + av
+		}
+	}
+	// 移除原始Init字段
+	for i := range snapshots {
+		delete(snapshots[i].Fields, key)
+	}
+	return true
+}
+
+// extractTagAndCompare 比较两个代码仓库URL，提取tag并判断是否仅tag不同。
+// 返回 (tag, 是否仅tag不同)
+func extractTagAndCompare(url1, url2 string) (string, bool) {
+	idx1 := strings.Index(url1, "/blob/")
+	idx2 := strings.Index(url2, "/blob/")
+	if idx1 < 0 || idx2 < 0 {
+		return "", false
+	}
+	prefix1 := url1[:idx1]
+	prefix2 := url2[:idx2]
+	if prefix1 != prefix2 {
+		return "", false
+	}
+	rest1 := url1[idx1+len("/blob/"):]
+	rest2 := url2[idx2+len("/blob/"):]
+	slash1 := strings.Index(rest1, "/")
+	slash2 := strings.Index(rest2, "/")
+	if slash1 < 0 || slash2 < 0 {
+		return "", false
+	}
+	_ = rest1[:slash1] // tag1
+	tag2 := rest2[:slash2]
+	after1 := rest1[slash1:]
+	after2 := rest2[slash2:]
+	if after1 != after2 {
+		return "", false
+	}
+	return tag2, true
 }
 
 func (d *DMDBClient) getFromDevops(path string, params map[string]string, result interface{}) error {
