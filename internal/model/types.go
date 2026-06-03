@@ -1,6 +1,11 @@
 package model
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+
+	"gorm.io/gorm"
+)
 
 type User struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
@@ -45,7 +50,7 @@ type BlueprintNode struct {
 	EnvName       string    `gorm:"size:128" json:"env_name"`
 	PositionX     int       `json:"pos_x"`
 	PositionY     int       `json:"pos_y"`
-	GateType      string    `gorm:"size:32;default:manual" json:"gate_type"` // manual, api_hook
+	GateType      string    `gorm:"size:32;default:manual" json:"gate_type"` // manual, api_hook, auto
 	ApproveRoleID *uint     `json:"approve_role_id,omitempty"`
 	ApproveRole   *Role     `gorm:"foreignKey:ApproveRoleID" json:"approve_role,omitempty"`
 	WebhookToken  string    `gorm:"size:64" json:"webhook_token,omitempty"` // 系统自动生成
@@ -62,21 +67,40 @@ type BlueprintEdge struct {
 }
 
 type Release struct {
-	ID             uint           `gorm:"primaryKey" json:"id"`
-	Title          string         `gorm:"size:256" json:"title"`
-	DeployUnitCode string         `gorm:"size:128;index" json:"deploy_unit_code"`
-	DeployUnitName string         `gorm:"size:256" json:"deploy_unit_name"`
-	SiloCode       string         `gorm:"size:128" json:"silo_code"`
-	SiloName       string         `gorm:"size:256" json:"silo_name"`
-	SystemName     string         `gorm:"size:256" json:"system_name"`
-	Version        string         `gorm:"size:64" json:"version"`
-	BlueprintID    *uint          `gorm:"index" json:"blueprint_id,omitempty"`
-	Status         string         `gorm:"size:32;default:draft;index" json:"status"`
-	CreatedByID    uint           `json:"created_by_id"`
-	CreatedBy      User           `gorm:"foreignKey:CreatedByID" json:"created_by,omitempty"`
-	Stages         []ReleaseStage `json:"stages,omitempty"`
-	CreatedAt      time.Time      `json:"created_at"`
-	UpdatedAt      time.Time      `json:"updated_at"`
+	ID             uint                   `gorm:"primaryKey" json:"id"`
+	Title          string                 `gorm:"size:256" json:"title"`
+	DeployUnitCode string                 `gorm:"size:128;index" json:"deploy_unit_code"`
+	DeployUnitName string                 `gorm:"size:256" json:"deploy_unit_name"`
+	SiloCode       string                 `gorm:"size:128" json:"silo_code"`
+	SiloName       string                 `gorm:"size:256" json:"silo_name"`
+	SystemName     string                 `gorm:"size:256" json:"system_name"`
+	Version        string                 `gorm:"size:64" json:"version"`
+	BlueprintID    *uint                  `gorm:"index" json:"blueprint_id,omitempty"`
+	ChangesJSON    string                 `gorm:"type:text" json:"-"`
+	Changes        map[string]interface{} `gorm:"-" json:"changes,omitempty"`
+	Status         string                 `gorm:"size:32;default:draft;index" json:"status"`
+	CreatedByID    uint                   `json:"created_by_id"`
+	CreatedBy      User                   `gorm:"foreignKey:CreatedByID" json:"created_by,omitempty"`
+	Stages         []ReleaseStage         `json:"stages,omitempty"`
+	CreatedAt      time.Time              `json:"created_at"`
+	UpdatedAt      time.Time              `json:"updated_at"`
+}
+
+// AfterFind GORM hook — 从 ChangesJSON 解析出 Changes
+func (r *Release) AfterFind(tx *gorm.DB) error {
+	if r.ChangesJSON != "" {
+		json.Unmarshal([]byte(r.ChangesJSON), &r.Changes)
+	}
+	return nil
+}
+
+// BeforeCreate GORM hook — 从 Changes 序列化到 ChangesJSON
+func (r *Release) BeforeCreate(tx *gorm.DB) error {
+	if r.Changes != nil {
+		b, _ := json.Marshal(r.Changes)
+		r.ChangesJSON = string(b)
+	}
+	return nil
 }
 
 type ReleaseStage struct {
@@ -86,8 +110,7 @@ type ReleaseStage struct {
 	EnvCode        string     `gorm:"size:64" json:"env_code"`
 	EnvName        string     `gorm:"size:128" json:"env_name"`
 	PromotionOrder int        `json:"promotion_order"`
-		GateType       string     `gorm:"size:32;default:manual" json:"gate_type,omitempty"`
-
+	GateType       string     `gorm:"size:32;default:manual" json:"gate_type,omitempty"`
 	Status         string     `gorm:"size:32;default:pending" json:"status"`
 	ApprovedByID   *uint      `json:"approved_by_id,omitempty"`
 	ApprovedBy     *User      `gorm:"foreignKey:ApprovedByID" json:"approved_by,omitempty"`

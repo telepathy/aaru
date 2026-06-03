@@ -26,7 +26,7 @@ function showLoading(container) {
 }
 
 function statusHTML(status) {
-  const names = {draft:'草稿',in_progress:'进行中',approved:'已通过',rejected:'已驳回',completed:'已完成',failed:'失败',rolled_back:'已回滚',pending:'待处理',skipped:'已跳过'};
+  const names = {draft:'草稿',in_progress:'进行中',approved:'已通过',pushing:'推送中',completed:'已完成',rejected:'已驳回',failed:'失败',rolled_back:'已回滚',pending:'待处理',skipped:'已跳过'};
   return `<span class="status-badge status-${status}">${names[status]||status}</span>`;
 }
 
@@ -59,6 +59,10 @@ async function loadPage(page, param) {
   const body = document.getElementById('content-body');
   const actions = document.getElementById('header-actions');
   actions.innerHTML = '';
+  // 重置 content-body 样式（create-release 页面会修改）
+  body.style.display = '';
+  body.style.flexDirection = '';
+  body.style.overflow = '';
 
   switch(page) {
     case 'releases': setPage('releases','发布管理','管理应用发布流水线'); renderReleaseList(body,actions); break;
@@ -121,14 +125,30 @@ async function renderReleaseDetail(body, id) {
     const r = await api('/releases/'+id);
     if (!r) return;
     const stages = r.stages||[];
-    const pipelineHTML = stages.length ? `<div class="card" style="margin-bottom:24px"><div class="card-header"><div class="card-title">发布流水线</div></div><div class="card-body"><div class="pipeline">${stages.map((s,i)=>`
-      <div class="pipeline-stage ${s.status}">
-        <div class="pipeline-node">${s.status==='approved'||s.status==='completed'?'✓':s.status==='rejected'?'✕':(i+1)}</div>
+    const pipelineHTML = stages.length ? `<div class="card" style="margin-bottom:24px"><div class="card-header"><div class="card-title">发布流水线</div></div><div class="card-body"><div class="pipeline">${stages.map((s,i)=>{
+      const done = s.status==='completed';
+      const active = s.status==='in_progress'||s.status==='pushing'||s.status==='approved';
+      const icon = done?'✓':s.status==='rejected'?'✕':(i+1);
+      return `<div class="pipeline-stage ${s.status}">
+        <div class="pipeline-node">${icon}</div>
         <div class="pipeline-label">${escapeHtml(s.env_name||s.env_code)}</div>
         <div style="font-size:11px;color:var(--text-muted);margin-top:2px">${statusHTML(s.status)}</div>
       </div>
-      ${i<stages.length-1?`<div class="pipeline-line ${stages[i].status==='approved'||stages[i].status==='completed'?'approved':''}"></div>`:''}
-    `).join('')}</div></div></div>` : '';
+      ${i<stages.length-1?`<div class="pipeline-line ${done||stages[i].status==='approved'?'approved':''}"></div>`:''}`;
+    }).join('')}</div></div></div>` : '';
+
+    // Changes summary
+    const changes = r.changes||{};
+    const changeKeys = Object.keys(changes);
+    let changesHTML = '';
+    if (changeKeys.length > 0) {
+      const rows = changeKeys.map(k=>{
+        const v = changes[k];
+        const disp = Array.isArray(v)?JSON.stringify(v):String(v);
+        return `<tr><td><strong>${escapeHtml(k)}</strong></td><td style="word-break:break-all;max-width:400px;white-space:pre-wrap;font-size:12px">${escapeHtml(disp)}</td></tr>`;
+      }).join('');
+      changesHTML = `<div class="card" style="margin-bottom:24px"><div class="card-header"><div class="card-title">变更内容</div></div><div class="card-body"><table class="data-table"><thead><tr><th>字段</th><th>目标值</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+    }
 
     body.innerHTML = `<div class="release-detail-header">
       <div class="release-info">
@@ -144,19 +164,26 @@ async function renderReleaseDetail(body, id) {
       </div>
       <div>${r.status==='draft'?'<button class="btn btn-primary" onclick="startRelease('+r.id+')">开始发布</button>':''}${r.status==='in_progress'||r.status==='completed'?'<button class="btn btn-danger" onclick="rollbackRelease('+r.id+')">回滚</button>':''}</div>
     </div>
+    ${changesHTML}
     ${pipelineHTML}
     <div class="card"><div class="card-header"><div class="card-title">阶段详情</div></div><div class="card-body">${renderStageTable(stages)}</div></div>`;
   } catch(e) { body.innerHTML = '<div class="empty-state"><p>加载失败: '+escapeHtml(e.message)+'</p></div>'; }
 }
 
 function renderStageTable(stages) {
-  return `<table class="data-table"><thead><tr><th>环境</th><th>顺序</th><th>状态</th><th>审批人</th><th>备注</th><th>操作</th></tr></thead><tbody>${stages.map(s=>`<tr>
-    <td><strong>${escapeHtml(s.env_name||s.env_code)}</strong></td><td>${s.promotion_order+1}</td>
-    <td>${statusHTML(s.status)}</td>
-    <td>${escapeHtml(s.approved_by?.username||'-')}</td>
-    <td>${escapeHtml(s.comment||'-')}</td>
-    <td class="action-group">${s.status==='in_progress'?'<button class="btn btn-sm btn-success" onclick="approveStage('+s.id+')">通过</button><button class="btn btn-sm btn-danger" onclick="rejectStage('+s.id+')">驳回</button>':''}${s.status==='pending'?'<button class="btn btn-sm btn-primary" onclick="promoteStage('+s.id+')">部署到此环境</button>':''}</td>
-  </tr>`).join('')}</tbody></table>`;
+  return `<table class="data-table"><thead><tr><th>环境</th><th>顺序</th><th>状态</th><th>审批人</th><th>备注</th><th>操作</th></tr></thead><tbody>${stages.map(s=>{
+    let actions = '';
+    if (s.status==='in_progress') actions = '<button class="btn btn-sm btn-success" onclick="approveStage('+s.id+')">通过</button><button class="btn btn-sm btn-danger" onclick="rejectStage('+s.id+')">驳回</button>';
+    else if (s.status==='pending') actions = '<button class="btn btn-sm btn-primary" onclick="promoteStage('+s.id+')">部署到此环境</button>';
+    else if (s.status==='pushing') actions = '<button class="btn btn-sm btn-warning" onclick="retryPush('+s.id+')">重试推送</button>';
+    return `<tr>
+      <td><strong>${escapeHtml(s.env_name||s.env_code)}</strong></td><td>${s.promotion_order+1}</td>
+      <td>${statusHTML(s.status)}</td>
+      <td>${escapeHtml(s.approved_by?.username||'-')}</td>
+      <td>${escapeHtml(s.comment||'-')}</td>
+      <td class="action-group">${actions}</td>
+    </tr>`;
+  }).join('')}</tbody></table>`;
 }
 
 async function approveStage(id) {
@@ -175,73 +202,609 @@ async function promoteStage(id) {
   try { await api('/stages/'+id+'/promote', { method:'POST' }); toast('已推进','success'); loadPage('releases'); }
   catch(e) { toast(e.message,'error'); }
 }
+async function retryPush(id) {
+  if (!confirm('确认重试推送配置到DMDB？')) return;
+  try { await api('/stages/'+id+'/retry-push', { method:'POST' }); toast('推送成功','success'); loadPage('releases'); }
+  catch(e) { toast(e.message,'error'); }
+}
 
+
+// ===== Create Release Wizard =====
+let crStep = 1;
+let crTitle = '';
+let crDUList = [];
+let crSelectedDU = null;
+let crSnapshots = [];
+let crChanges = {};
+let crExtraFields = [];
+let crBlueprints = [];
+let crSelectedBP = null;
+let crBlueprintEnvs = new Set(); // 蓝图涉及的环境代码集合
+let crFieldSelOpen = false;
+let crPerEnvMode = new Set(); // fields in per-env mode
+let crPerEnvVals = {};        // {fieldName: {envCode: val}}
+
+// All editable fields grouped
+const CR_SCALAR_FIELDS = [
+  'AppName','desc','du_type_code','deploy_type',
+  'ArtifactGroupId','ArtifactId','ArtifactVersion',
+  'NodeCount','RunAsUser','RunAsGroup','JvmArgs','LogLevel','MetricPort',
+  'MaxPollRecords','BatchSize','kafkaTxTimeoutMs','kafkaDeliveryTimeoutMs',
+  'ExtraConfig','UseFtp','RemoteDir','CommonServiceConfig','DUDatabases',
+  'dbStreamEnhancedAudit'
+];
+const CR_ARRAY_FIELDS = [
+  'InitDb','InitDbAuth','InitDbFinal','InitKafka','frameworkDatasource','ServiceDatasource'
+];
+const CR_READONLY_FIELDS = new Set([
+  'id','classCode','biz_serial','Env','System','SiloCode','SiloNo',
+  'SystemName','belong_System'
+]);
 
 async function renderCreateRelease(body, actions) {
+  crStep = 1; crTitle = ''; crSelectedDU = null; crSnapshots = [];
+  crChanges = {}; crExtraFields = []; crSelectedBP = null; crBlueprintEnvs = new Set();
+  crPerEnvMode = new Set(); crPerEnvVals = {};
+  body.style.overflow = 'hidden';
+  body.style.display = 'flex';
+  body.style.flexDirection = 'column';
+  showLoading(body);
+  try { const d = await api('/du-list'); crDUList = d.deploy_units||[]; } catch(e) { crDUList = []; }
+  try { const d = await api('/blueprints'); crBlueprints = d.blueprints||[]; } catch(e) { crBlueprints = []; }
+  crRenderStep(body);
+}
+
+function crRenderStep(body) {
+  const actions = document.getElementById('header-actions');
+  if (actions) actions.innerHTML = '';
+  const steps = ['选择DU与蓝图','查看现状','定义变更','预览'];
+  const circles = steps.map((s,i)=>{
+    const n = i+1;
+    const cls = n===crStep?'active':(n<crStep?'done':'');
+    const circle = `<div class="cr-wizard-step ${cls}"><div class="cr-wizard-num">${n<crStep?'✓':n}</div></div>`;
+    const line = i<steps.length-1?`<div class="cr-wizard-line ${n<crStep?'done':''}"></div>`:'';
+    return circle + line;
+  }).join('');
+  const labels = steps.map((s,i)=>{
+    const n = i+1;
+    const cls = n===crStep?'active':(n<crStep?'done':'');
+    const col = `<div class="cr-wizard-step ${cls}"><div class="cr-wizard-label-col"><div class="cr-wizard-label">${s}</div></div></div>`;
+    const space = i<steps.length-1?`<div class="cr-wizard-label-space"></div>`:'';
+    return col + space;
+  }).join('');
+  const wizard = `<div class="cr-wizard"><div class="cr-wizard-circles">${circles}</div><div class="cr-wizard-labels">${labels}</div></div>`;
+  let step;
+  switch(crStep) {
+    case 1: step = crStep1(); break;
+    case 2: step = crStep2(); break;
+    case 3: step = crStep3(); break;
+    case 4: step = crStep4Preview(); break;
+  }
+  body.innerHTML = `<div style="display:flex;flex-direction:column;flex:1;min-height:0">${wizard}<div class="card" style="flex:1;min-height:0;display:flex;flex-direction:column"><div class="card-body" style="flex:1;min-height:0;overflow-y:auto">${step.content}</div></div><div class="cr-actions" style="flex-shrink:0">${step.actions}</div></div>`;
+}
+
+// ===== Step 1: Select DU + Blueprint =====
+function crStep1() {
+  const siloSet = new Set(), sysSet = new Set();
+  crDUList.forEach(d => { if(d.silo) siloSet.add(d.silo); if(d.system) sysSet.add(d.system); });
+  const silos = [...siloSet].sort(), systems = [...sysSet].sort();
+  return {
+    content: `
+      <div style="display:grid;grid-template-columns:320px 1fr;gap:20px;height:100%">
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div class="cr-section" style="margin-bottom:0;flex-shrink:0"><div class="cr-section-title">基本信息</div>
+            <div class="form-group"><label class="form-label">发布标题</label>
+              <input class="form-control" id="cr-title" value="${escapeHtml(crTitle)}" placeholder="例: v2.1.0 发版" onchange="crTitle=this.value"></div>
+          </div>
+          <div class="cr-section" style="margin-bottom:0;flex-shrink:0"><div class="cr-section-title">选择晋级蓝图</div>
+            <div class="form-group">
+              <select class="form-control" id="cr-bp-select" onchange="crSelectBP(parseInt(this.value))">
+                <option value="">请选择蓝图</option>
+                ${crBlueprints.map(b=>`<option value="${b.id}" ${crSelectedBP&&crSelectedBP.id===b.id?'selected':''}>${escapeHtml(b.name)}${b.description?' — '+escapeHtml(b.description):''}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+          <div class="cr-section" style="margin-bottom:0;flex-shrink:0"><div class="cr-section-title">筛选部署单元</div>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <select class="form-control" id="cr-silo" onchange="crFilterDUList()" style="font-size:12px">
+                <option value="">全部竖井</option>${silos.map(s=>`<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('')}
+              </select>
+              <select class="form-control" id="cr-system" onchange="crFilterDUList()" style="font-size:12px">
+                <option value="">全部系统</option>${systems.map(s=>`<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;min-height:0;overflow:hidden">
+          <div class="cr-section-title" style="flex-shrink:0;margin-bottom:0">选择部署单元</div>
+          <div id="cr-du-list" style="flex:1;overflow-y:auto">${crRenderDUList(crDUList)}</div>
+        </div>
+      </div>`,
+    actions: `
+      <button class="btn btn-secondary" onclick="loadPage('releases')">取消</button>
+      <button class="btn btn-primary" id="cr-next1" onclick="crGoStep2()" ${crSelectedDU&&crSelectedBP?'':'disabled'}>下一步: 查看现状 →</button>`
+  };
+}
+
+function crRenderDUList(dus) {
+  if (!dus||dus.length===0) return '<div class="empty-state"><p>无匹配的部署单元</p></div>';
+  return dus.map(d=>{
+    const sel = crSelectedDU&&crSelectedDU.code===d.code?'selected':'';
+    return `<div class="du-list-item ${sel}" onclick='crSelectDU(${JSON.stringify(d).replace(/'/g,"&#39;")})' style="margin-bottom:4px">
+      <div class="du-item-code">${escapeHtml(d.code)}</div>
+      <div class="du-item-name">${escapeHtml(d.system||'')}</div>
+      <div class="du-item-meta">Silo: ${escapeHtml(d.silo||'-')} / System: ${escapeHtml(d.system||'-')}</div>
+    </div>`;
+  }).join('');
+}
+
+window.crFilterDUList = function() {
+  const silo = document.getElementById('cr-silo')?.value||'';
+  const sys = document.getElementById('cr-system')?.value||'';
+  let dus = crDUList;
+  if (silo) dus = dus.filter(d=>d.silo===silo);
+  if (sys) dus = dus.filter(d=>d.system===sys);
+  document.getElementById('cr-du-list').innerHTML = crRenderDUList(dus);
+};
+
+window.crSelectDU = function(d) {
+  crSelectedDU = d;
+  document.querySelectorAll('#cr-du-list .du-list-item').forEach(el=>{
+    el.classList.toggle('selected', el.querySelector('.du-item-code')?.textContent===d.code);
+  });
+  crUpdateNextBtn();
+};
+
+window.crGoStep2 = async function() {
+  if (!crSelectedDU || !crSelectedBP) return;
+  crTitle = document.getElementById('cr-title')?.value || crTitle;
+  crStep = 2;
+  const body = document.getElementById('content-body');
   showLoading(body);
   try {
-    const [envsData, silosData, bpsData] = await Promise.all([
-      api('/environments').catch(()=>({envs:[]})),
-      api('/silos').catch(()=>({silos:[]})),
-      api('/blueprints').catch(()=>({blueprints:[]}))
-    ]);
-    const envs = envsData.envs||[];
-    const silos = silosData.silos||[];
-    const bps = bpsData.blueprints||[];
-
-    body.innerHTML = `<div class="card" style="max-width:700px"><div class="card-header"><div class="card-title">新建发布</div></div><div class="card-body">
-      <form id="create-form" onsubmit="submitRelease(event)">
-        <div class="form-group"><label class="form-label">标题</label><input class="form-control" name="title" required placeholder="例: v2.1.0 发版"></div>
-        <div class="form-group"><label class="form-label">竖井（Silo）</label><select class="form-control" name="silo" onchange="loadDUsBySilo(this.value)">
-          <option value="">选择竖井</option>${silos.map(s=>`<option value="${escapeHtml(s.biz_serial)}">${escapeHtml(s.name||s.biz_serial)}</option>`).join('')}
-        </select></div>
-        <div class="form-group"><label class="form-label">环境（查询部署单元用）</label><select class="form-control" name="env" onchange="loadDUsByEnv(this.value)">
-          <option value="">选择环境</option>${envs.map(e=>`<option value="${escapeHtml(e.Env)}">${escapeHtml(e.name)}</option>`).join('')}
-        </select></div>
-        <div class="form-group"><label class="form-label">部署单元</label><select class="form-control" name="deploy_unit_code" required><option value="">先选择环境或竖井</option></select></div>
-        <div class="form-group"><label class="form-label">版本</label><input class="form-control" name="version" required placeholder="例: 2.1.0.RELEASE"></div>
-        <div class="form-group"><label class="form-label">晋级蓝图（可选）</label><select class="form-control" name="blueprint_id">
-          <option value="">不使用蓝图（自定义下方环境列表）</option>${bps.map(b=>`<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('')}
-        </select></div>
-        <div class="form-group"><label class="form-label">发布目标环境（当不使用蓝图时选择）</label>
-          <div style="display:flex;flex-wrap:wrap;gap:8px;padding:8px 0" id="env-checkboxes">${envs.map((e,i)=>`
-            <label style="display:flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:13px">
-              <input type="checkbox" name="env_code" value="${escapeHtml(e.Env)}" checked>
-              ${escapeHtml(e.name)}
-            </label>
-          `).join('')}</div>
-        </div>
-        <button type="submit" class="btn btn-primary">创建发布</button>
-        <button type="button" class="btn btn-secondary" onclick="loadPage(\'releases\')" style="margin-left:8px">取消</button>
-      </form>
-    </div></div>`;
-  } catch(e) { body.innerHTML = '<div class="empty-state"><p>加载失败: '+escapeHtml(e.message)+'</p></div>'; }
-}
-
-async function submitRelease(e) {
-  e.preventDefault();
-  const f = new FormData(e.target);
-  const btn = e.target.querySelector('button[type="submit"]');
-  btn.disabled = true; btn.textContent = '创建中...';
-  const bpidRaw = f.get('blueprint_id');
-  const bpid = bpidRaw ? parseInt(bpidRaw) : null;
-  const envCheckboxes = document.querySelectorAll('input[name="env_code"]:checked');
-  const environments = Array.from(envCheckboxes).map(cb => cb.value);
+    // 获取蓝图详情以得到环境列表
+    const bpDetail = await api('/blueprints/'+crSelectedBP.id);
+    crBlueprintEnvs = new Set((bpDetail.nodes||[]).map(n=>n.env_code));
+  } catch(e) { crBlueprintEnvs = new Set(); }
   try {
-    await api('/releases', {
-      method:'POST',
-      body:JSON.stringify({
-        title: f.get('title'),
-        deploy_unit_code: f.get('deploy_unit_code'),
-        version: f.get('version'),
-        blueprint_id: bpid||null,
-        environments: environments,
-      })
-    });
-    toast('发布单创建成功','success');
-    loadPage('releases');
-  } catch(err) { toast(err.message,'error'); btn.disabled = false; btn.textContent = '创建发布'; }
+    const data = await api('/deploy-units/'+encodeURIComponent(crSelectedDU.code)+'/compare');
+    crSnapshots = data.snapshots||[];
+  } catch(e) { crSnapshots = []; }
+  crRenderStep(body);
+};
+
+// 单元格值颜色表（相同值相同颜色，不同值不同颜色）
+const VALUE_COLORS = [
+  '#dbeafe', // 蓝
+  '#dcfce7', // 绿
+  '#fef9c3', // 黄
+  '#fce7f3', // 粉
+  '#ede9fe', // 紫
+  '#ffedd5', // 橙
+  '#ccfbf1', // 青
+  '#e0e7ff', // 靛
+  '#fae8ff', // 洋红
+  '#f0f9ff', // 天蓝
+];
+
+// 为一行的值分配颜色：相同值→相同颜色，不同值→不同颜色
+function crAssignValueColors(vals) {
+  const valColorMap = new Map();
+  let colorIdx = 0;
+  return vals.map(v => {
+    const key = String(v);
+    if (!valColorMap.has(key)) {
+      valColorMap.set(key, VALUE_COLORS[colorIdx % VALUE_COLORS.length]);
+      colorIdx++;
+    }
+    return valColorMap.get(key);
+  });
 }
+
+// ===== Step 2: View Current State =====
+function crStep2() {
+  const code = crSelectedDU?.code||'';
+  let tableHTML = '';
+  if (crSnapshots.length === 0) {
+    tableHTML = '<div class="empty-state"><p>未在任何DMDB环境中找到此部署单元</p></div>';
+  } else {
+    // 收集所有字段（排除展开的子行和只读字段）
+    const allKeys = new Set();
+    crSnapshots.forEach(s => {
+      if(s.fields) Object.keys(s.fields).forEach(k => {
+        if(!CR_READONLY_FIELDS.has(k) && !k.includes('[')) allKeys.add(k);
+      });
+    });
+    // 只保留有差异的字段
+    const diffKeys = [...allKeys].filter(k => {
+      const vals = crSnapshots.map(s=>String((s.fields||{})[k]??''));
+      return new Set(vals).size > 1;
+    }).sort();
+    if (diffKeys.length === 0) {
+      tableHTML = '<div class="empty-state"><p>所有环境配置一致，无差异</p></div>';
+    } else {
+      const envCount = crSnapshots.length;
+      const colW = 280;
+      const bpEnvCount = crSnapshots.filter(s=>crBlueprintEnvs.has(s.env)).length;
+      const otherEnvCount = envCount - bpEnvCount;
+      const summary = otherEnvCount > 0
+        ? `${envCount} 个环境（蓝图内 ${bpEnvCount} / 蓝图外 ${otherEnvCount}）/ ${diffKeys.length} 个差异项`
+        : `${envCount} 个环境 / ${diffKeys.length} 个差异项`;
+      tableHTML = `<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">${summary}</div>
+        <div style="overflow:auto;max-height:60vh"><table class="data-table cr-status-table" style="table-layout:fixed;width:${180 + envCount * colW}px">
+        <colgroup><col style="width:180px">${crSnapshots.map(()=>`<col style="width:${colW}px">`).join('')}</colgroup>
+        <thead><tr><th style="position:sticky;left:0;background:#fafafa;z-index:1">配置项</th>${crSnapshots.map(s=>{
+          const inBP = crBlueprintEnvs.has(s.env);
+          const tag = inBP ? '' : ' <span style="font-size:10px;color:#9ca3af;font-weight:400">[蓝图外]</span>';
+          const thBg = inBP ? '' : 'background:#f9fafb;';
+          return `<th style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;${thBg}">${escapeHtml(s.env_name||s.env)}${tag}</th>`;
+        }).join('')}</tr></thead>
+        <tbody>${diffKeys.map(k=>{
+          const isArrayField = CR_ARRAY_FIELDS.includes(k);
+          const rawVals = crSnapshots.map(s=>(s.fields||{})[k]??'');
+          const dispVals = rawVals.map(v=>isArrayField ? crArrSummary(v) : summarizeValue(v));
+          const colors = crAssignValueColors(rawVals);
+          return `<tr><td style="position:sticky;left:0;background:#fff;z-index:1"><strong class="diff-field-link" data-field="${escapeHtml(k)}" style="cursor:pointer;color:var(--accent)" title="点击查看详细差异">${escapeHtml(k)}</strong>${isArrayField?' <span style="font-size:10px;color:var(--text-muted)">[数组]</span>':''}</td>${dispVals.map((v,i)=>{
+            const inBP = crBlueprintEnvs.has(crSnapshots[i].env);
+            const tdBg = inBP ? `background:${colors[i]}` : `background:#f9fafb;opacity:0.7`;
+            return `<td style="font-size:12px;word-break:break-all;white-space:pre-wrap;${tdBg}">${v}</td>`;
+          }).join('')}</tr>`;
+        }).join('')}</tbody></table></div>`;
+    }
+  }
+  return {
+    content: `<div class="cr-section"><div class="cr-section-title">${escapeHtml(code)} — 各环境现状</div>${tableHTML}</div>`,
+    actions: `
+      <button class="btn btn-secondary" onclick="crGoBack(1)">← 上一步</button>
+      <button class="btn btn-primary" onclick="crGoStep3()">下一步: 定义变更 →</button>`
+  };
+}
+
+window.crGoBack = function(step) {
+  crStep = step;
+  crRenderStep(document.getElementById('content-body'));
+};
+
+window.crGoStep3 = function() {
+  crStep = 3;
+  if (!crChanges.ArtifactVersion && crChanges.ArtifactVersion!=='') crChanges = { ArtifactVersion: '' };
+  crRenderStep(document.getElementById('content-body'));
+};
+
+// ===== Step 3: Define Changes =====
+function crStep3() {
+  return {
+    content: `
+      <div class="cr-section"><div class="cr-section-title">ArtifactVersion（必填）</div>${crRenderFieldRow('ArtifactVersion', true)}</div>
+      <div class="cr-section"><div class="cr-section-title">其他变更字段</div>
+        ${crExtraFields.map(f=>crRenderExtraField(f)).join('')}
+        <div style="position:relative;display:inline-block">
+          <button class="cr-add-field-btn" onclick="crToggleFieldSelector(event)">+ 添加字段</button>
+          <div id="cr-field-selector" class="cr-field-selector" style="display:none">
+            ${crRenderFieldCheckboxes()}
+            <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
+              <button class="btn btn-sm btn-primary" onclick="crAddSelectedFields()">确认添加</button>
+            </div>
+          </div>
+        </div>
+      </div>`,
+    actions: `
+      <button class="btn btn-secondary" onclick="crGoBack(2)">← 上一步</button>
+      <button class="btn btn-primary" onclick="crGoStep4Preview()">下一步: 预览 →</button>`
+  };
+}
+
+function crRenderFieldRow(fieldName) {
+  if (!crSnapshots.length) return '<p style="color:var(--text-muted)">无环境数据</p>';
+  const envs = crSnapshots.map(s=>({code:s.env, name:s.env_name||s.env, val:(s.fields||{})[fieldName]}));
+  const vals = envs.map(e=>String(e.val??''));
+  const allSame = new Set(vals).size<=1;
+  const isArray = crSnapshots.some(s=>{ const v=(s.fields||{})[fieldName]; return v&&typeof v==='string'&&v.startsWith('['); });
+  const perEnv = crPerEnvMode.has(fieldName);
+
+  const firstCol = `<th style="position:sticky;left:0;background:#fafafa;z-index:1;min-width:100px">配置项</th>`;
+
+  // 按环境模式：每个环境一列输入框
+  if (perEnv) {
+    if (!crPerEnvVals[fieldName]) {
+      crPerEnvVals[fieldName] = {};
+      envs.forEach(e => { crPerEnvVals[fieldName][e.code] = isArray ? (e.val||'') : String(e.val??''); });
+    }
+    const pv = crPerEnvVals[fieldName];
+    const envThs = envs.map(e=>`<th style="white-space:nowrap">${escapeHtml(e.name)}</th>`).join('');
+    const envTds = envs.map(e=>{
+      const cur = pv[e.code]??'';
+      if (isArray) {
+        return `<td class="new-col" style="min-width:140px"><textarea rows="1" style="min-width:120px;font-size:11px" onchange="crSetPerEnv('${fieldName}','${e.code}',this.value)">${escapeHtml(cur)}</textarea></td>`;
+      }
+      return `<td class="new-col" style="min-width:140px"><input type="text" style="min-width:120px;font-size:11px" value="${escapeHtml(cur)}" onchange="crSetPerEnv('${fieldName}','${e.code}',this.value)"></td>`;
+    }).join('');
+    const firstTd = `<td style="position:sticky;left:0;background:#fff;z-index:1"><strong>${escapeHtml(fieldName)}</strong> <button class="btn btn-xs btn-secondary" onclick="crTogglePerEnv('${fieldName}',false)" title="收回为统一值">↺</button></td>`;
+    return `<div style="overflow-x:auto"><table class="cr-field-table">
+      <thead><tr>${firstCol}${envThs}</tr></thead>
+      <tbody><tr>${firstTd}${envTds}</tr></tbody></table></div>`;
+  }
+
+  // 统一模式
+  const envThs = envs.map(e=>`<th style="white-space:nowrap">${escapeHtml(e.name)}</th>`).join('');
+  const newColTh = `<th style="background:#f0fdf4;min-width:220px">新值 <button class="btn btn-xs btn-secondary" onclick="crTogglePerEnv('${fieldName}',true)" title="按环境指定">⇄</button></th>`;
+
+  if (isArray) {
+    const envTds = envs.map(e=>`<td class="env-col ${allSame?'':'diff'}" style="min-width:100px"><div style="max-height:80px;overflow:auto;font-size:11px;font-family:monospace;white-space:pre-wrap">${escapeHtml(crFormatJson(e.val))}</div></td>`).join('');
+    const firstTd = `<td style="position:sticky;left:0;background:#fff;z-index:1"><strong>${escapeHtml(fieldName)}</strong></td>`;
+    const currentVal = crChanges[fieldName]||'';
+    const displayVal = currentVal ? crFormatJson(currentVal) : '';
+    return `<div style="overflow-x:auto"><table class="cr-field-table">
+      <thead><tr>${firstCol}${envThs}${newColTh}</tr></thead>
+      <tbody><tr>${firstTd}${envTds}
+      <td class="new-col"><textarea rows="4" style="min-width:200px;font-family:monospace;font-size:11px" onchange="crSetChange('${fieldName}',this.value)" placeholder='JSON数组，如 [{"id":"1","type":"mysql"}]'>${escapeHtml(displayVal)}</textarea>
+      <div style="margin-top:4px"><button class="btn btn-xs btn-secondary" onclick="crFormatJsonInput('${fieldName}')">格式化</button> <span style="font-size:10px;color:var(--text-muted)">留空=不修改</span></div></td></tr></tbody></table></div>`;
+  }
+
+  const envTds = envs.map(e=>`<td class="env-col ${allSame?'':'diff'}" style="min-width:100px">${escapeHtml(String(e.val??'-'))}</td>`).join('');
+  const firstTd = `<td style="position:sticky;left:0;background:#fff;z-index:1"><strong>${escapeHtml(fieldName)}</strong></td>`;
+  return `<div style="overflow-x:auto"><table class="cr-field-table">
+    <thead><tr>${firstCol}${envThs}${newColTh}</tr></thead>
+    <tbody><tr>${firstTd}${envTds}
+    <td class="new-col"><input type="text" style="min-width:200px" value="${escapeHtml(crChanges[fieldName]||'')}" onchange="crSetChange('${fieldName}',this.value)" placeholder="不填=不修改"></td></tr></tbody></table></div>`;
+}
+
+function crArrSummary(v) {
+  if (!v||v==='null'||v==='[]') return '<span class="same-val">空</span>';
+  try {
+    const a=JSON.parse(v);
+    if(Array.isArray(a)) {
+      if (a.length===0) return '<span class="same-val">空</span>';
+      const preview = a.slice(0,3).map(item=>{
+        if (typeof item==='object'&&item!==null) {
+          const keys = Object.keys(item).slice(0,3).map(k=>`${k}:${JSON.stringify(item[k]).substring(0,20)}`).join(', ');
+          return `{${keys}${Object.keys(item).length>3?', ...':''}}`;
+        }
+        return String(item).substring(0,30);
+      }).join(', ');
+      return `<span style="font-size:11px">${escapeHtml(preview)}${a.length>3?', ...':''}</span> <span style="font-size:10px;color:var(--text-muted)">(${a.length}项)</span>`;
+    }
+  } catch(e) {}
+  return escapeHtml(String(v).substring(0,80));
+}
+
+// 摘要展示复杂值：JSON对象/数组显示预览，长字符串截断
+function summarizeValue(v) {
+  if (v === null || v === undefined || v === '') return '-';
+  const s = String(v);
+  // JSON对象
+  if (s.startsWith('{') && s.length > 80) {
+    try {
+      const obj = JSON.parse(s);
+      const keys = Object.keys(obj);
+      if (keys.length === 0) return '{}';
+      const preview = keys.slice(0, 3).map(k => {
+        const val = obj[k];
+        const vs = typeof val === 'object' ? (Array.isArray(val) ? `[...]` : '{...}') : JSON.stringify(val);
+        return `${k}: ${String(vs).substring(0, 24)}`;
+      }).join(', ');
+      return `<span style="font-size:11px">{${preview}${keys.length > 3 ? ', ...' : ''}}</span> <span style="font-size:10px;color:var(--text-muted)">(${keys.length}个字段)</span>`;
+    } catch(e) {}
+  }
+  // JSON数组
+  if (s.startsWith('[') && s.length > 80) {
+    try {
+      const arr = JSON.parse(s);
+      if (Array.isArray(arr)) {
+        if (arr.length === 0) return '[]';
+        const first = arr[0];
+        if (typeof first === 'object' && first !== null) {
+          const keys = Object.keys(first).slice(0, 2).map(k => `${k}:${JSON.stringify(first[k]).substring(0, 16)}`).join(', ');
+          return `<span style="font-size:11px">[{${keys}}, ...] <span style="color:var(--text-muted)">(${arr.length}项)</span></span>`;
+        }
+        return `<span style="font-size:11px">[${JSON.stringify(first).substring(0, 30)}${arr.length > 1 ? ', ...' : ''}] <span style="color:var(--text-muted)">(${arr.length}项)</span></span>`;
+      }
+    } catch(e) {}
+  }
+  // 长字符串截断
+  if (s.length > 100) {
+    return `<span style="font-size:11px" title="${escapeHtml(s)}">${escapeHtml(s.substring(0, 80))}...</span> <span style="font-size:10px;color:var(--text-muted)">(${s.length}字符)</span>`;
+  }
+  return escapeHtml(s);
+}
+
+// 格式化 JSON 字符串（用于显示）
+function crFormatJson(v) {
+  if (!v || v === 'null' || v === '[]') return v || '';
+  try { return JSON.stringify(JSON.parse(v), null, 2); } catch(e) {}
+  return String(v);
+}
+
+// 格式化 textarea 中的 JSON 输入
+window.crFormatJsonInput = function(fieldName) {
+  const ta = document.querySelector(`textarea[onchange="crSetChange('${fieldName}',this.value)"]`);
+  if (!ta) return;
+  try {
+    const parsed = JSON.parse(ta.value);
+    ta.value = JSON.stringify(parsed, null, 2);
+    crChanges[fieldName] = ta.value;
+  } catch(e) {
+    // JSON 不合法，不格式化
+  }
+};
+
+window.crTogglePerEnv = function(fieldName, toPerEnv) {
+  if (toPerEnv) {
+    crPerEnvMode.add(fieldName);
+    // 初始化 per-env 值为各环境当前值
+    crPerEnvVals[fieldName] = {};
+    crSnapshots.forEach(s => { crPerEnvVals[fieldName][s.env] = (s.fields||{})[fieldName] || ''; });
+  } else {
+    crPerEnvMode.delete(fieldName);
+    // 收回时：如果所有环境值相同，设为统一值；否则用第一个环境的值
+    const pv = crPerEnvVals[fieldName] || {};
+    const vals = Object.values(pv).map(String);
+    if (new Set(vals).size === 1 && vals.length > 0) {
+      crChanges[fieldName] = vals[0];
+    } else if (vals.length > 0) {
+      crChanges[fieldName] = vals[0];
+    }
+    delete crPerEnvVals[fieldName];
+  }
+  crRenderStep(document.getElementById('content-body'));
+};
+
+window.crSetPerEnv = function(fieldName, envCode, val) {
+  if (!crPerEnvVals[fieldName]) crPerEnvVals[fieldName] = {};
+  crPerEnvVals[fieldName][envCode] = val;
+};
+
+function crRenderExtraField(fieldName) {
+  return `<div class="cr-extra-field">
+    <div class="cr-extra-field-header"><span class="cr-extra-field-name">${escapeHtml(fieldName)}</span>
+      <button class="cr-extra-field-remove" onclick="crRemoveField('${fieldName}')">✕</button></div>
+    ${crRenderFieldRow(fieldName)}</div>`;
+}
+
+function crRenderFieldCheckboxes() {
+  const used = new Set(['ArtifactVersion',...crExtraFields]);
+  return [...CR_SCALAR_FIELDS,...CR_ARRAY_FIELDS].filter(f=>!used.has(f)).map(f=>`<label><input type="checkbox" value="${f}"> ${f}</label>`).join('');
+}
+
+window.crToggleFieldSelector = function(e) {
+  e.stopPropagation();
+  const el = document.getElementById('cr-field-selector');
+  if (!el) return;
+  el.style.display = el.style.display==='none'?'block':'none';
+};
+
+window.crAddSelectedFields = function() {
+  document.querySelectorAll('#cr-field-selector input:checked').forEach(cb => {
+    if (!crExtraFields.includes(cb.value)) { crExtraFields.push(cb.value); crChanges[cb.value]=crChanges[cb.value]||''; }
+  });
+  crRenderStep(document.getElementById('content-body'));
+};
+
+window.crRemoveField = function(f) {
+  crExtraFields = crExtraFields.filter(x=>x!==f);
+  delete crChanges[f];
+  crRenderStep(document.getElementById('content-body'));
+};
+
+window.crSetChange = function(f, v) { crChanges[f] = v; };
+
+window.crSelectBP = function(id) {
+  crSelectedBP = id ? (crBlueprints.find(b=>b.id===id)||null) : null;
+  crUpdateNextBtn();
+};
+
+function crUpdateNextBtn() {
+  const btn = document.getElementById('cr-next1');
+  if (btn) btn.disabled = !(crSelectedDU && crSelectedBP);
+}
+
+// ===== Step 4: Preview =====
+window.crGoStep4Preview = function() { crStep = 4; crRenderStep(document.getElementById('content-body')); };
+
+function crResolveForEnv(fieldName, envCode) {
+  if (crPerEnvMode.has(fieldName)) {
+    const pv = crPerEnvVals[fieldName]||{};
+    return pv[envCode] ?? '';
+  }
+  return crChanges[fieldName];
+}
+
+function crStep4Preview() {
+  // 收集所有变更字段（统一 + 按环境）
+  const changeKeys = new Set();
+  Object.keys(crChanges).forEach(k=>{ if(crChanges[k]!==''&&crChanges[k]!==undefined&&!crPerEnvMode.has(k)) changeKeys.add(k); });
+  crPerEnvMode.forEach(k=>changeKeys.add(k));
+
+  const summary = [...changeKeys].map(k=>{
+    if (crPerEnvMode.has(k)) return `<span style="display:inline-block;background:#dbeafe;color:#1e40af;padding:2px 8px;border-radius:4px;font-size:12px;margin:2px">${escapeHtml(k)}: (按环境)</span>`;
+    return `<span style="display:inline-block;background:#dbeafe;color:#1e40af;padding:2px 8px;border-radius:4px;font-size:12px;margin:2px">${escapeHtml(k)}: ${escapeHtml(String(crChanges[k]).substring(0,40))}</span>`;
+  }).join(' ');
+
+  let envsHTML = '';
+  if (crSnapshots.length>0) {
+    envsHTML = crSnapshots.map(s=>{
+      const inBP = crBlueprintEnvs.has(s.env);
+      const bpTag = inBP ? '' : ' <span style="font-size:10px;color:#9ca3af">[蓝图外]</span>';
+      const merged = {...(s.fields||{})};
+      changeKeys.forEach(k=>{ merged[k] = crResolveForEnv(k, s.env); });
+      const rows = Object.keys(merged).filter(k=>!CR_READONLY_FIELDS.has(k) && !k.includes('[')).map(k=>{
+        const orig = (s.fields||{})[k], nv = merged[k];
+        const changed = String(orig??'') !== String(nv??'');
+        const isArrayField = CR_ARRAY_FIELDS.includes(k);
+        const origDisp = isArrayField ? crArrSummary(orig) : summarizeValue(orig);
+        const newDisp = isArrayField ? crArrSummary(nv) : summarizeValue(nv);
+        return `<tr><td>${escapeHtml(k)}${isArrayField?' <span style="font-size:10px;color:var(--text-muted)">[数组]</span>':''}</td><td>${origDisp}</td><td>${changed?'<span class="cr-change-badge">⚡</span>':''} ${newDisp}</td></tr>`;
+      }).join('');
+      const opacity = inBP ? '' : 'opacity:0.7;';
+      return `<div class="cr-preview-env" style="${opacity}">
+        <div class="cr-preview-env-header">📍 ${escapeHtml(s.env_name||s.env)}${bpTag} <span style="font-weight:400;font-size:11px;color:var(--text-muted)">${escapeHtml(s.env)}</span></div>
+        <div class="cr-preview-env-body"><table class="data-table"><thead><tr><th>配置项</th><th>当前值</th><th>变更后</th></tr></thead><tbody>${rows}</tbody></table></div>
+      </div>`;
+    }).join('');
+  }
+  return {
+    content: `
+      <div class="cr-section"><div class="cr-section-title">变更内容</div>
+        <div style="margin-bottom:8px"><strong>标题:</strong> ${escapeHtml(crTitle)}</div>
+        <div style="margin-bottom:8px"><strong>部署单元:</strong> ${escapeHtml(crSelectedDU?.code||'')}</div>
+        <div style="margin-bottom:16px"><strong>蓝图:</strong> ${escapeHtml(crSelectedBP?.name||'')}</div>
+        <div>${summary||'<span style="color:var(--text-muted)">无变更</span>'}</div>
+      </div>
+      <div class="cr-section"><div class="cr-section-title">各环境变更预览</div>${envsHTML||'<div class="empty-state"><p>无环境数据</p></div>'}</div>`,
+    actions: `
+      <button class="btn btn-secondary" onclick="crGoBack(3)">← 上一步</button>
+      <button class="btn btn-success" onclick="crSubmitRelease()">确认创建发布</button>`
+  };
+}
+
+window.crSubmitRelease = async function() {
+  // 收集所有有变更的字段（统一模式 + 按环境模式）
+  const changes = {};
+
+  // 统一模式的字段
+  Object.keys(crChanges).forEach(k=>{
+    if (crPerEnvMode.has(k)) return; // 跳过按环境模式的字段
+    const v = crChanges[k];
+    if (v===''||v===undefined) return;
+    if (CR_ARRAY_FIELDS.includes(k)) { try { changes[k]=JSON.parse(v); } catch(e) { changes[k]=v; } }
+    else if (['NodeCount','MetricPort','MaxPollRecords','BatchSize'].includes(k)) { changes[k]=parseInt(v)||v; }
+    else { changes[k]=v; }
+  });
+
+  // 按环境模式的字段：只发送与当前值不同的部分
+  crPerEnvMode.forEach(k=>{
+    const pv = crPerEnvVals[k]||{};
+    const envChanged = {};
+    crSnapshots.forEach(s=>{
+      const orig = String((s.fields||{})[k]??'');
+      const nv = String(pv[s.env]??'');
+      if (nv!==orig) envChanged[s.env] = CR_ARRAY_FIELDS.includes(k) ? (()=>{try{return JSON.parse(nv)}catch(e){return nv}})() :
+        (['NodeCount','MetricPort','MaxPollRecords','BatchSize'].includes(k) ? parseInt(nv)||nv : nv);
+    });
+    const changedVals = Object.values(envChanged).map(String);
+    if (changedVals.length===0) return; // 无变更
+    if (new Set(changedVals).size===1) {
+      changes[k] = Object.values(envChanged)[0]; // 所有变更值相同，用标量
+    } else {
+      changes[k] = {_default: Object.values(envChanged)[0]};
+      Object.entries(envChanged).forEach(([env,v])=>{
+        if (String(v)!==String(Object.values(envChanged)[0])) changes[k][env]=v;
+      });
+    }
+  });
+
+  if (Object.keys(changes).length===0) { toast('请至少填写一个变更字段','error'); return; }
+  // 检查 ArtifactVersion 是否有值
+  const av = changes.ArtifactVersion;
+  if (!av || (typeof av==='object' && Object.keys(av).length===0)) { toast('ArtifactVersion为必填项','error'); return; }
+
+  try {
+    await api('/releases', { method:'POST', body:JSON.stringify({ title:crTitle, deploy_unit_code:crSelectedDU.code, blueprint_id:crSelectedBP.id, changes }) });
+    toast('发布单创建成功','success');
+    crStep=1; crChanges={}; crExtraFields=[]; crPerEnvMode=new Set(); crPerEnvVals={};
+    loadPage('releases');
+  } catch(e) { toast(e.message,'error'); }
+};
 
 // ===== Deploy Units Browse =====
 let duSelectedCode = null;
@@ -428,31 +991,39 @@ function renderCompareTable() {
 
   const skipKeys = new Set(['id','Env','classCode','biz_serial','SiloCode','System']);
   const allKeys = new Set();
-  selected.forEach(s => Object.keys(s.fields||{}).forEach(k => { if (!skipKeys.has(k)) allKeys.add(k); }));
+  selected.forEach(s => Object.keys(s.fields||{}).forEach(k => { if (!skipKeys.has(k) && !k.includes('[')) allKeys.add(k); }));
 
-  const diffFields = [...allKeys].filter(key => {
+  // 只保留有差异的字段
+  const diffKeys = [...allKeys].filter(key => {
     const vals = selected.map(s=>String((s.fields||{})[key]||''));
     return new Set(vals).size > 1;
-  });
+  }).sort();
 
-  if (diffFields.length === 0) {
+  if (diffKeys.length === 0) {
     wrap.innerHTML = '<div class="empty-state"><p>所选环境配置完全一致，无差异</p></div>';
     return;
   }
 
-  const val = (s, key) => {
-    const raw = String((s.fields||{})[key]||'-');
-    return raw.split(' ').map(escapeHtml).join('<span style="background:#fde68a">&nbsp;</span>');
-  };
-
-  wrap.innerHTML = `<div style="margin-bottom:8px;font-size:12px;color:var(--text-muted)">${selected.length} 个环境 / ${diffFields.length} 个差异项</div>
+  wrap.innerHTML = `<div style="margin-bottom:8px;font-size:12px;color:var(--text-muted)">${selected.length} 个环境 / ${diffKeys.length} 个差异项</div>
     <table class="data-table du-compare-table" style="min-width:600px;table-layout:auto">
       <thead><tr><th style="min-width:120px">配置项</th>${selected.map(e=>`<th>${escapeHtml(e.env_name||e.env)}<br><span style="font-weight:400;font-size:10px;color:var(--text-muted)">${escapeHtml(e.env)}</span></th>`).join('')}</tr></thead>
-      <tbody>${diffFields.map(key=>`<tr class="du-diff-row">
-        <td><strong style="font-size:12px;word-break:break-all">${escapeHtml(key)}</strong></td>
-        ${selected.map(s=>`<td style="font-size:12px;word-break:break-all;max-width:300px;white-space:pre-wrap">${val(s,key)}</td>`).join('')}
-      </tr>`).join('')}</tbody>
+      <tbody>${diffKeys.map(key=>{
+        const rawVals = selected.map(s=>String((s.fields||{})[key]||''));
+        const colors = crAssignValueColors(rawVals);
+        return `<tr>
+          <td><strong class="diff-field-link" data-field="${escapeHtml(key)}" title="点击查看详细差异">${escapeHtml(key)}</strong></td>
+          ${selected.map((s,i)=>`<td style="font-size:12px;word-break:break-all;max-width:450px;white-space:pre-wrap;background:${colors[i]}">${summarizeValue((s.fields||{})[key])}</td>`).join('')}
+        </tr>`;
+      }).join('')}</tbody>
     </table>`;
+
+  // 绑定字段名点击事件 → 打开 diff 模态框
+  wrap.querySelectorAll('.diff-field-link').forEach(el => {
+    el.addEventListener('click', () => {
+      const field = el.dataset.field;
+      if (field) showDiffModal(field, duSnapshots);
+    });
+  });
 }
 
 // ===== Approvals =====
@@ -517,7 +1088,7 @@ function showCreateRole() {
 // ===== Util =====
 function escapeHtml(s) {
   if (s==null) return '';
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
 function fmtTime(t) {
@@ -526,10 +1097,167 @@ function fmtTime(t) {
   catch(e) { return String(t); }
 }
 
+// ===== Diff Modal =====
+function formatForDiff(v) {
+  if (v === null || v === undefined || v === '') return '';
+  const s = String(v);
+  if (s.startsWith('{') || s.startsWith('[')) {
+    try { return JSON.stringify(JSON.parse(s), null, 2); } catch(e) {}
+  }
+  return s;
+}
+
+function computeLineDiff(aLines, bLines) {
+  const aLen = aLines.length, bLen = bLines.length;
+  const dp = Array.from({length: aLen+1}, ()=>new Array(bLen+1).fill(0));
+  for (let i=1; i<=aLen; i++) {
+    for (let j=1; j<=bLen; j++) {
+      dp[i][j] = aLines[i-1]===bLines[j-1] ? dp[i-1][j-1]+1 : Math.max(dp[i-1][j], dp[i][j-1]);
+    }
+  }
+  const result = [];
+  let i=aLen, j=bLen;
+  while (i>0 || j>0) {
+    if (i>0 && j>0 && aLines[i-1]===bLines[j-1]) {
+      result.unshift({type:'ctx', aNum:i, bNum:j, text:aLines[i-1]});
+      i--; j--;
+    } else if (j>0 && (i===0 || dp[i][j-1]>=dp[i-1][j])) {
+      result.unshift({type:'add', bNum:j, text:bLines[j-1]});
+      j--;
+    } else {
+      result.unshift({type:'del', aNum:i, text:aLines[i-1]});
+      i--;
+    }
+  }
+  return result;
+}
+
+function showDiffModal(fieldName, snapshots) {
+  const old = document.getElementById('diff-modal-root');
+  if (old) old.remove();
+
+  const formatted = snapshots.map(s => formatForDiff((s.fields||{})[fieldName]));
+  const envLabels = snapshots.map(s => s.env_name || s.env);
+  const envCodes = snapshots.map(s => s.env);
+  const envOpts = snapshots.map((s, i) => ({idx:i, label:`${s.env_name||s.env} (${s.env})`}));
+
+  const overlay = document.createElement('div');
+  overlay.id = 'diff-modal-root';
+  overlay.className = 'diff-modal-overlay';
+  overlay.addEventListener('click', e => { if (e.target===overlay) overlay.remove(); });
+
+  const modal = document.createElement('div');
+  modal.className = 'diff-modal';
+  modal.innerHTML = `
+    <div class="diff-modal-header">
+      <h3>${escapeHtml(fieldName)} — 详细差异</h3>
+      <button class="diff-modal-close" onclick="document.getElementById('diff-modal-root').remove()">✕</button>
+    </div>
+    <div class="diff-modal-body" id="diff-body"></div>`;
+
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  const bodyEl = modal.querySelector('#diff-body');
+
+  function envOptions(selectedIdx) {
+    return envOpts.map(o => `<option value="${o.idx}" ${o.idx===selectedIdx?'selected':''}>${escapeHtml(o.label)}</option>`).join('');
+  }
+
+  // 根据左侧环境，生成右侧下拉框选项（带差异描述）
+  function rightEnvOptions(leftIdx, selectedIdx) {
+    return envOpts.map(o => {
+      if (o.idx === leftIdx) {
+        return `<option value="${o.idx}" disabled>${escapeHtml(o.label)} (当前)</option>`;
+      }
+      const same = formatted[o.idx] === formatted[leftIdx];
+      const tag = same ? '无差异' : '有差异';
+      return `<option value="${o.idx}" ${o.idx===selectedIdx?'selected':''}>${escapeHtml(o.label)} — ${tag}</option>`;
+    }).join('');
+  }
+
+  function renderDiff(leftIdx, rightIdx) {
+    const aLines = formatted[leftIdx].split('\n');
+    const bLines = formatted[rightIdx].split('\n');
+    const diff = computeLineDiff(aLines, bLines);
+    const addCount = diff.filter(l=>l.type==='add').length;
+    const delCount = diff.filter(l=>l.type==='del').length;
+
+    const renderSide = (side) => diff.filter(l => l.type==='ctx' || l.type===side).map(l => {
+      const cls = l.type==='add'?'add':l.type==='del'?'del':'ctx';
+      const num = side==='del' ? (l.aNum||'') : (l.bNum||'');
+      return `<div class="diff-line ${cls}"><div class="diff-line-num">${num}</div><div class="diff-line-content">${escapeHtml(l.text)}</div></div>`;
+    }).join('');
+
+    bodyEl.querySelector('#diff-content').innerHTML = `
+      <div style="padding:8px 16px;font-size:12px;color:var(--text-muted);border-bottom:1px solid var(--border)">
+        <span style="color:#16a34a;font-weight:600">+${addCount}</span>
+        <span style="margin:0 8px;color:#ef4444;font-weight:600">-${delCount}</span>
+        <span>行差异</span>
+      </div>
+      <div class="diff-container">
+        <div class="diff-pane"><div class="diff-pane-header">${escapeHtml(envLabels[leftIdx])} <span style="font-weight:400;color:var(--text-muted)">(${escapeHtml(envCodes[leftIdx])})</span></div>${renderSide('del')}</div>
+        <div class="diff-pane"><div class="diff-pane-header">${escapeHtml(envLabels[rightIdx])} <span style="font-weight:400;color:var(--text-muted)">(${escapeHtml(envCodes[rightIdx])})</span></div>${renderSide('add')}</div>
+      </div>`;
+  }
+
+  // Build toolbar + content area
+  const defaultLeft = 0;
+  const defaultRight = snapshots.length > 1 ? 1 : 0;
+  bodyEl.innerHTML = `
+    <div class="diff-toolbar">
+      <select class="form-control" id="diff-env-left" style="width:auto;min-width:160px;font-size:13px">${envOptions(defaultLeft)}</select>
+      <span style="color:var(--text-muted);font-size:13px;font-weight:600">vs</span>
+      <select class="form-control" id="diff-env-right" style="width:auto;min-width:160px;font-size:13px">${rightEnvOptions(defaultLeft, defaultRight)}</select>
+    </div>
+    <div id="diff-content"></div>`;
+
+  const leftSel = bodyEl.querySelector('#diff-env-left');
+  const rightSel = bodyEl.querySelector('#diff-env-right');
+
+  function onSelChange() {
+    const li = parseInt(leftSel.value);
+    const ri = parseInt(rightSel.value);
+    // 重建右侧下拉框，带上差异描述
+    rightSel.innerHTML = rightEnvOptions(li, ri);
+    if (li === parseInt(rightSel.value)) {
+      // 当前选中项被禁用了，自动选第一个非禁用项
+      for (const opt of rightSel.options) {
+        if (!opt.disabled) { rightSel.value = opt.value; break; }
+      }
+    }
+    const finalRi = parseInt(rightSel.value);
+    if (li === finalRi) {
+      bodyEl.querySelector('#diff-content').innerHTML = '<div class="diff-empty">请选择两个不同的环境进行比对</div>';
+      return;
+    }
+    renderDiff(li, finalRi);
+  }
+
+  leftSel.addEventListener('change', onSelChange);
+  rightSel.addEventListener('change', onSelChange);
+
+  const escHandler = e => { if (e.key==='Escape') { overlay.remove(); document.removeEventListener('keydown', escHandler); } };
+  document.addEventListener('keydown', escHandler);
+
+  onSelChange();
+}
+
 // ===== Init =====
 document.addEventListener('DOMContentLoaded', async () => {
   await checkAuth();
   loadPage('releases');
+
+  // 全局事件委托：点击 .diff-field-link 打开 diff 模态框
+  document.addEventListener('click', e => {
+    const el = e.target.closest('.diff-field-link');
+    if (!el) return;
+    const field = el.dataset.field;
+    // 优先使用 duSnapshots（部署单元页面），其次 crSnapshots（创建发布向导）
+    const snaps = (typeof duSnapshots !== 'undefined' && duSnapshots.length > 0) ? duSnapshots :
+                  (typeof crSnapshots !== 'undefined' && crSnapshots.length > 0) ? crSnapshots : null;
+    if (field && snaps) showDiffModal(field, snaps);
+  });
 });
 
 // ===== Blueprint Management =====
@@ -580,7 +1308,7 @@ async function loadPageBlueprintEditor(bpId) {
   if (bp) {
     dagState.nodes = (bp.nodes||[]).map(n=> ({...n, id:n.id, env_code:n.env_code, env_name:n.env_name||n.env_code, pos_x:n.pos_x, pos_y:n.pos_y, gate_type:n.gate_type||'manual', approve_role_id:n.approve_role_id, webhook_token:n.webhook_token||''}));
     dagState.edges = (bp.edges||[]).map(e=>({...e, id:e.id, from_node_id:e.from_node_id, to_node_id:e.to_node_id}));
-    dagState.nextId = Math.max(100, ...dagState.nodes.map(n=>n.id)+1);
+    dagState.nextId = Math.max(100, ...dagState.nodes.map(n=>n.id)) + 1;
   } else {
     dagState = { nodes: [], edges: [], nextId: 100, selectedNode: null, selectedEdge: null };
   }

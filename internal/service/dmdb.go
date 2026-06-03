@@ -13,9 +13,9 @@ import (
 )
 
 type DMDBClient struct {
-	baseURL    string
-	devopsURL  string
-	client     *resty.Client
+	baseURL   string
+	devopsURL string
+	client    *resty.Client
 }
 
 func NewDMDBClient(baseURL, devopsURL string) *DMDBClient {
@@ -89,13 +89,14 @@ func (d *DMDBClient) ListSystems() ([]model.SystemInfo, error) {
 
 // QueryDeployUnits 查询部署单元
 func (d *DMDBClient) QueryDeployUnits(env, system, silo string) ([]model.DeployUnitInfo, error) {
-	path := "/api/query-du/" + env
+	parts := []string{"/api/query-du", env}
 	if system != "" {
-		path += "/" + system
+		parts = append(parts, system)
 	}
 	if silo != "" {
-		path += "/" + silo
+		parts = append(parts, silo)
 	}
+	path := strings.Join(parts, "/")
 	var dus []model.DeployUnitInfo
 	if err := d.get(path, &dus); err != nil {
 		return nil, err
@@ -218,6 +219,7 @@ func (d *DMDBClient) CompareDUConfig(duCode string) ([]model.DUConfigSnapshot, e
 			defer wg.Done()
 			raw, err := d.getRawDU(envCode, duCode)
 			if err != nil {
+				log.Printf("CompareDUConfig: getRawDU(%s, %s): %v", envCode, duCode, err)
 				return
 			}
 			fields := flattenFields(raw)
@@ -496,10 +498,7 @@ func expandObjectArrayFields(snapshots []model.DUConfigSnapshot, maxItems int) {
 			}
 		}
 
-		// 删除原始JSON字段
-		for si := range snapshots {
-			delete(snapshots[si].Fields, key)
-		}
+		// 保留原始JSON字段，不删除
 	}
 }
 
@@ -530,6 +529,29 @@ func (d *DMDBClient) getFromDevops(path string, params map[string]string, result
 		return fmt.Errorf("GET %s: status=%d", path, resp.StatusCode())
 	}
 	return nil
+}
+
+// UpdateDeployUnit 调用DMDB批量更新接口更新部署单元（Aaru每次只更新1个）
+func (d *DMDBClient) UpdateDeployUnit(env string, updates []map[string]interface{}) ([]model.BatchUpdateResult, error) {
+	var resp model.BatchUpdateResponse
+	r, err := d.client.R().SetBody(updates).SetResult(&resp).
+		Post(d.baseURL + "/api/du-batch-update/" + env)
+	if err != nil {
+		return nil, fmt.Errorf("POST /api/du-batch-update/%s: %w", env, err)
+	}
+	if r.StatusCode() != 200 {
+		return nil, fmt.Errorf("POST /api/du-batch-update/%s: status=%d body=%s", env, r.StatusCode(), r.String())
+	}
+	return resp.Results, nil
+}
+
+// GetDeployUnitMeta 获取DU的id和classCode（用于构建更新请求）
+func (d *DMDBClient) GetDeployUnitMeta(env, code string) (id, classCode string, err error) {
+	du, err := d.GetDeployUnitByCode(env, code)
+	if err != nil {
+		return "", "", err
+	}
+	return du.Id, du.ClassCode, nil
 }
 
 // GetAllDeployUnits 查询所有环境的部署单元

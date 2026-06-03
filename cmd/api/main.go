@@ -22,7 +22,7 @@ var defaultConfigPaths = []string{
 
 func main() {
 	config := loadConfig()
-	dbStore, err := store.NewDBStore(config.DbPath)
+	dbStore, err := store.NewDBStore(config.DBDriver, config.DSN, config.DbPath)
 	if err != nil {
 		log.Fatalf("init db: %v", err)
 	}

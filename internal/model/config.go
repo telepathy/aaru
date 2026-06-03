@@ -9,7 +9,9 @@ import (
 
 type Config struct {
 	ServerHost  string       `yaml:"server_host,omitempty"`
-	DbPath      string       `yaml:"db_path,omitempty"`
+	DBDriver    string       `yaml:"db_driver,omitempty"` // sqlite 或 mysql
+	DSN         string       `yaml:"dsn,omitempty"`       // MySQL DSN，如 user:pass@tcp(host:port)/dbname?charset=utf8mb4&parseTime=True&loc=Local
+	DbPath      string       `yaml:"db_path,omitempty"`   // SQLite 文件路径（db_driver=sqlite 时使用）
 	JwtSecret   string       `yaml:"jwt_secret,omitempty"`
 	DMDB        DMDBConfig   `yaml:"dmdb"`
 	DevOps      DevOpsConfig `yaml:"devops"`
@@ -59,6 +61,8 @@ func LoadConfig(path string) (*Config, error) {
 func getDefaultConfig() *Config {
 	return &Config{
 		ServerHost: "127.0.0.1:8080",
+		DBDriver:   "sqlite",
+		DSN:        "",
 		DbPath:     filepath.Join(os.TempDir(), "aaru.db"),
 		JwtSecret:  "aaru-dev-secret-change-in-production",
 		DMDB: DMDBConfig{

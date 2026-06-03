@@ -42,7 +42,7 @@ func RegisterRoutes(
 	r.GET("/auth/login", authHandler.MockLogin)
 	r.POST("/auth/login", authHandler.MockCallback)
 	r.GET("/auth/callback", authHandler.MockCallback)
-		r.POST("/auth/callback", authHandler.MockCallback)
+	r.POST("/auth/callback", authHandler.MockCallback)
 
 	r.GET("/api/hooks/promote/:stageId", releaseHandler.WebhookPromote)
 	r.POST("/api/hooks/promote/:stageId", releaseHandler.WebhookPromote)
@@ -73,6 +73,7 @@ func RegisterRoutes(
 		api.POST("/stages/:stageId/approve", releaseHandler.ApproveStage)
 		api.POST("/stages/:stageId/reject", releaseHandler.RejectStage)
 		api.POST("/stages/:stageId/promote", releaseHandler.PromoteToNext)
+		api.POST("/stages/:stageId/retry-push", releaseHandler.RetryPush)
 
 		// 审批
 		api.GET("/approvals/pending", releaseHandler.PendingApprovals)

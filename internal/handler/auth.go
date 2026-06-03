@@ -53,12 +53,18 @@ func (h *AuthHandler) MockCallback(c *gin.Context) {
 	// 查找或创建用户
 	user, err := h.store.GetUserByUsername(username)
 	if err != nil {
-		// 创建新用户
-		gitlabID := int64(1000 + len(h.mockUsers))
+		// 创建新用户（用用户名生成唯一 GitLabID）
+		var hash int64
+		for _, c := range username {
+			hash = hash*31 + int64(c)
+		}
+		if hash < 0 {
+			hash = -hash
+		}
 		user = &model.User{
 			Username:  username,
 			Email:     username + "@example.com",
-			GitlabID:  gitlabID,
+			GitlabID:  hash,
 			AvatarURL: "",
 		}
 		if err := h.store.CreateUser(user); err != nil {

@@ -17,11 +17,19 @@ func NewReleaseHandler(rs *service.ReleaseService) *ReleaseHandler {
 }
 
 type CreateReleaseRequest struct {
-	Title          string   `json:"title" binding:"required"`
-	DeployUnitCode string   `json:"deploy_unit_code" binding:"required"`
-	Version        string   `json:"version" binding:"required"`
-	Environments   []string `json:"environments"`
-	BlueprintID    *uint    `json:"blueprint_id"`
+	Title          string                 `json:"title" binding:"required"`
+	DeployUnitCode string                 `json:"deploy_unit_code" binding:"required"`
+	BlueprintID    uint                   `json:"blueprint_id" binding:"required"`
+	Changes        map[string]interface{} `json:"changes"`
+}
+
+func parseID(c *gin.Context, param string) (uint, bool) {
+	id, err := strconv.ParseUint(c.Param(param), 10, 64)
+	if err != nil || id == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid " + param})
+		return 0, false
+	}
+	return uint(id), true
 }
 
 func (h *ReleaseHandler) CreateRelease(c *gin.Context) {
@@ -30,10 +38,14 @@ func (h *ReleaseHandler) CreateRelease(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if req.BlueprintID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "blueprint_id is required"})
+		return
+	}
 	userID := c.GetUint("user_id")
 	release, err := h.releaseService.CreateRelease(
-		req.Title, req.DeployUnitCode, req.Version, userID,
-		req.Environments, req.BlueprintID,
+		req.Title, req.DeployUnitCode, userID,
+		req.BlueprintID, req.Changes,
 	)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -45,6 +57,12 @@ func (h *ReleaseHandler) CreateRelease(c *gin.Context) {
 func (h *ReleaseHandler) ListReleases(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
 	releases, total, err := h.releaseService.ListReleases(page, pageSize)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -54,8 +72,11 @@ func (h *ReleaseHandler) ListReleases(c *gin.Context) {
 }
 
 func (h *ReleaseHandler) GetRelease(c *gin.Context) {
-	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
-	release, err := h.releaseService.GetRelease(uint(id))
+	id, ok := parseID(c, "id")
+	if !ok {
+		return
+	}
+	release, err := h.releaseService.GetRelease(id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "release not found"})
 		return
@@ -64,9 +85,12 @@ func (h *ReleaseHandler) GetRelease(c *gin.Context) {
 }
 
 func (h *ReleaseHandler) StartRelease(c *gin.Context) {
-	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
+	id, ok := parseID(c, "id")
+	if !ok {
+		return
+	}
 	userID := c.GetUint("user_id")
-	release, err := h.releaseService.StartRelease(uint(id), userID)
+	release, err := h.releaseService.StartRelease(id, userID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -75,11 +99,16 @@ func (h *ReleaseHandler) StartRelease(c *gin.Context) {
 }
 
 func (h *ReleaseHandler) ApproveStage(c *gin.Context) {
-	stageID, _ := strconv.ParseUint(c.Param("stageId"), 10, 64)
-	var req struct{ Comment string `json:"comment"` }
+	stageID, ok := parseID(c, "stageId")
+	if !ok {
+		return
+	}
+	var req struct {
+		Comment string `json:"comment"`
+	}
 	c.ShouldBindJSON(&req)
 	userID := c.GetUint("user_id")
-	release, err := h.releaseService.ApproveStage(uint(stageID), userID, req.Comment)
+	release, err := h.releaseService.ApproveStage(stageID, userID, req.Comment)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -88,11 +117,16 @@ func (h *ReleaseHandler) ApproveStage(c *gin.Context) {
 }
 
 func (h *ReleaseHandler) RejectStage(c *gin.Context) {
-	stageID, _ := strconv.ParseUint(c.Param("stageId"), 10, 64)
-	var req struct{ Comment string `json:"comment"` }
+	stageID, ok := parseID(c, "stageId")
+	if !ok {
+		return
+	}
+	var req struct {
+		Comment string `json:"comment"`
+	}
 	c.ShouldBindJSON(&req)
 	userID := c.GetUint("user_id")
-	release, err := h.releaseService.RejectStage(uint(stageID), userID, req.Comment)
+	release, err := h.releaseService.RejectStage(stageID, userID, req.Comment)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -101,9 +135,12 @@ func (h *ReleaseHandler) RejectStage(c *gin.Context) {
 }
 
 func (h *ReleaseHandler) RollbackRelease(c *gin.Context) {
-	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
+	id, ok := parseID(c, "id")
+	if !ok {
+		return
+	}
 	userID := c.GetUint("user_id")
-	release, err := h.releaseService.RollbackRelease(uint(id), userID)
+	release, err := h.releaseService.RollbackRelease(id, userID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -112,9 +149,12 @@ func (h *ReleaseHandler) RollbackRelease(c *gin.Context) {
 }
 
 func (h *ReleaseHandler) PromoteToNext(c *gin.Context) {
-	stageID, _ := strconv.ParseUint(c.Param("stageId"), 10, 64)
+	stageID, ok := parseID(c, "stageId")
+	if !ok {
+		return
+	}
 	userID := c.GetUint("user_id")
-	release, err := h.releaseService.PromoteToNext(uint(stageID), userID)
+	release, err := h.releaseService.PromoteToNext(stageID, userID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -126,7 +166,7 @@ func (h *ReleaseHandler) PendingApprovals(c *gin.Context) {
 	userID := c.GetUint("user_id")
 	stages, err := h.releaseService.GetPendingApprovals(userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"stages": stages})
@@ -135,12 +175,27 @@ func (h *ReleaseHandler) PendingApprovals(c *gin.Context) {
 // WebhookPromote 外部系统通过webhook触发自动晋级
 func (h *ReleaseHandler) WebhookPromote(c *gin.Context) {
 	token := c.Query("token")
-	stageID, _ := strconv.ParseUint(c.Param("stageId"), 10, 64)
-	if token == "" || stageID == 0 {
+	stageID, ok := parseID(c, "stageId")
+	if !ok || token == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
 	}
-	release, err := h.releaseService.WebhookPromote(uint(stageID), token)
+	release, err := h.releaseService.WebhookPromote(stageID, token)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, release)
+}
+
+// RetryPush 重试停留在 pushing 状态的 stage
+func (h *ReleaseHandler) RetryPush(c *gin.Context) {
+	stageID, ok := parseID(c, "stageId")
+	if !ok {
+		return
+	}
+	userID := c.GetUint("user_id")
+	release, err := h.releaseService.RetryPush(stageID, userID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

@@ -1,7 +1,9 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"aaru/internal/model"
@@ -19,7 +21,7 @@ func NewReleaseService(s *store.DBStore, d *DMDBClient, p *PermissionService, bp
 	return &ReleaseService{store: s, dmdb: d, permSvc: p, bpService: bp}
 }
 
-func (r *ReleaseService) CreateRelease(title, duCode, version string, createdByID uint, envCodes []string, blueprintID *uint) (*model.Release, error) {
+func (r *ReleaseService) CreateRelease(title, duCode string, createdByID uint, blueprintID uint, changes map[string]interface{}) (*model.Release, error) {
 	allEnvs, err := r.dmdb.ListEnvironments()
 	if err != nil {
 		return nil, fmt.Errorf("list environments: %w", err)
@@ -38,12 +40,29 @@ func (r *ReleaseService) CreateRelease(title, duCode, version string, createdByI
 	}
 
 	var siloName string
-	silos, _ := r.dmdb.ListSilos()
-	for _, s := range silos {
-		if s.BizSerial == duInfo.SiloCode {
-			siloName = s.Name
-			break
+	silos, err := r.dmdb.ListSilos()
+	if err == nil {
+		for _, s := range silos {
+			if s.BizSerial == duInfo.SiloCode {
+				siloName = s.Name
+				break
+			}
 		}
+	}
+
+	// 从 changes 中提取 version
+	var version string
+	if v, ok := changes["ArtifactVersion"]; ok {
+		version = fmt.Sprintf("%v", v)
+	}
+
+	changesJSON := ""
+	if len(changes) > 0 {
+		b, err := json.Marshal(changes)
+		if err != nil {
+			return nil, fmt.Errorf("marshal changes: %w", err)
+		}
+		changesJSON = string(b)
 	}
 
 	release := &model.Release{
@@ -54,7 +73,9 @@ func (r *ReleaseService) CreateRelease(title, duCode, version string, createdByI
 		SiloName:       siloName,
 		SystemName:     duInfo.SystemName,
 		Version:        version,
-		BlueprintID:    blueprintID,
+		BlueprintID:    &blueprintID,
+		ChangesJSON:    changesJSON,
+		Changes:        changes,
 		Status:         "draft",
 		CreatedByID:    createdByID,
 	}
@@ -63,43 +84,33 @@ func (r *ReleaseService) CreateRelease(title, duCode, version string, createdByI
 		return nil, fmt.Errorf("create release: %w", err)
 	}
 
-	var stages []model.ReleaseStage
-	if blueprintID != nil {
-		nodes, _ := r.store.GetBlueprintNodes(*blueprintID)
-		for i, node := range nodes {
-			nodeID := node.ID
-			stages = append(stages, model.ReleaseStage{
-				ReleaseID:      release.ID,
-				NodeID:         &nodeID,
-				EnvCode:        node.EnvCode,
-				EnvName:        node.EnvName,
-				PromotionOrder: i,
-				GateType:       node.GateType,
-				Status:         "pending",
-			})
-		}
-	} else {
-		envNameMap := make(map[string]string)
-		for _, e := range allEnvs { envNameMap[e.Env] = e.Name }
-		if len(envCodes) == 0 {
-			for _, e := range allEnvs { envCodes = append(envCodes, e.Env) }
-		}
-		for i, code := range envCodes {
-			name := envNameMap[code]
-			if name == "" { name = code }
-			stages = append(stages, model.ReleaseStage{
-				ReleaseID: release.ID, EnvCode: code, EnvName: name,
-				PromotionOrder: i, Status: "pending",
-			})
-		}
+	// 从蓝图创建 stages
+	nodes, err := r.store.GetBlueprintNodes(blueprintID)
+	if err != nil {
+		return nil, fmt.Errorf("get blueprint nodes: %w", err)
 	}
-
-	for i := range stages {
-		if err := r.store.CreateReleaseStage(&stages[i]); err != nil {
+	if len(nodes) == 0 {
+		return nil, fmt.Errorf("blueprint has no nodes")
+	}
+	for i, node := range nodes {
+		nodeID := node.ID
+		stage := model.ReleaseStage{
+			ReleaseID:      release.ID,
+			NodeID:         &nodeID,
+			EnvCode:        node.EnvCode,
+			EnvName:        node.EnvName,
+			PromotionOrder: i,
+			GateType:       node.GateType,
+			Status:         "pending",
+		}
+		if err := r.store.CreateReleaseStage(&stage); err != nil {
 			return nil, fmt.Errorf("create stage: %w", err)
 		}
 	}
-	r.store.DB().Preload("Stages").First(release, release.ID)
+
+	if err := r.store.DB().Preload("Stages").First(release, release.ID).Error; err != nil {
+		return nil, fmt.Errorf("reload release: %w", err)
+	}
 	return release, nil
 }
 
@@ -117,31 +128,36 @@ func (r *ReleaseService) StartRelease(releaseID, userID uint) (*model.Release, e
 	if len(release.Stages) == 0 {
 		return nil, fmt.Errorf("no stages")
 	}
-	release.Status = "in_progress"
-	r.store.DB().Save(release)
+	if release.BlueprintID == nil {
+		return nil, fmt.Errorf("blueprint required")
+	}
 
-	if release.BlueprintID != nil {
-		sources, _ := r.bpService.GetSourceNodeIDs(*release.BlueprintID)
-		for i := range release.Stages {
-			if release.Stages[i].NodeID != nil {
-				for _, src := range sources {
-					if *release.Stages[i].NodeID == src {
-						release.Stages[i].Status = "in_progress"
-						r.store.DB().Save(&release.Stages[i])
-						r.autoProgress(releaseID, release.Stages[i].ID)
+	release.Status = "in_progress"
+	if err := r.store.DB().Save(release).Error; err != nil {
+		return nil, fmt.Errorf("save release: %w", err)
+	}
+
+	// 激活 source 节点（无入边的节点）
+	sources, _ := r.bpService.GetSourceNodeIDs(*release.BlueprintID)
+	for i := range release.Stages {
+		if release.Stages[i].NodeID != nil {
+			for _, src := range sources {
+				if *release.Stages[i].NodeID == src {
+					release.Stages[i].Status = "in_progress"
+					if err := r.store.DB().Save(&release.Stages[i]).Error; err != nil {
+						log.Printf("save stage %d: %v", release.Stages[i].ID, err)
 					}
+					r.autoProgress(releaseID, release.Stages[i].ID)
 				}
 			}
 		}
-	} else {
-		release.Stages[0].Status = "in_progress"
-		r.store.DB().Save(&release.Stages[0])
 	}
+
 	r.store.DB().Preload("Stages").First(release, release.ID)
 	return release, nil
 }
 
-
+// autoProgress 处理 auto gate 的自动流转
 func (r *ReleaseService) autoProgress(releaseID uint, stageID uint) {
 	var stage model.ReleaseStage
 	if err := r.store.DB().First(&stage, stageID).Error; err != nil {
@@ -150,33 +166,139 @@ func (r *ReleaseService) autoProgress(releaseID uint, stageID uint) {
 	if stage.Status != "in_progress" || stage.GateType != "auto" {
 		return
 	}
+
+	release, err := r.store.GetReleaseWithStages(releaseID)
+	if err != nil {
+		return
+	}
+
+	// auto gate: in_progress → approved → pushing → completed
 	stage.Status = "approved"
 	t := time.Now()
 	stage.ApprovedAt = &t
-	r.store.DB().Save(&stage)
+	if err := r.store.DB().Save(&stage).Error; err != nil {
+		log.Printf("autoProgress: save stage %d: %v", stageID, err)
+		return
+	}
+
+	if err := r.applyChanges(release, &stage); err != nil {
+		log.Printf("autoProgress: applyChanges stage %d: %v", stageID, err)
+		return
+	}
+
 	r.activateChildren(releaseID, *stage.NodeID)
+
+	// 重新加载 release 以检查是否完成
+	release, err = r.store.GetReleaseWithStages(releaseID)
+	if err == nil {
+		r.checkReleaseCompleted(release)
+	}
 }
 
+// resolveForEnv 将 changes 中的 per-env 对象解析为该环境的具体值
+// 支持两种格式：
+//   - 标量: "v2.1.0" → 所有环境统一
+//   - 对象: {"_default":"v2.1.0", "prd3-focus":"v2.0.0"} → 按环境取值
+func resolveForEnv(changes map[string]interface{}, envCode string) map[string]interface{} {
+	result := make(map[string]interface{})
+	for k, v := range changes {
+		if m, ok := v.(map[string]interface{}); ok {
+			if specific, ok := m[envCode]; ok {
+				result[k] = specific
+			} else if d, ok := m["_default"]; ok {
+				result[k] = d
+			}
+		} else {
+			result[k] = v
+		}
+	}
+	return result
+}
+
+// applyChanges 将变更推送到 DMDB，stage 状态流转: approved → pushing → completed
+func (r *ReleaseService) applyChanges(release *model.Release, stage *model.ReleaseStage) error {
+	var changes map[string]interface{}
+	if release.ChangesJSON != "" {
+		if err := json.Unmarshal([]byte(release.ChangesJSON), &changes); err != nil {
+			return fmt.Errorf("unmarshal changes: %w", err)
+		}
+	}
+
+	// 无变更，直接 completed
+	if len(changes) == 0 {
+		stage.Status = "completed"
+		return r.store.DB().Save(stage).Error
+	}
+
+	// 解析该环境的具体变更值
+	envChanges := resolveForEnv(changes, stage.EnvCode)
+	if len(envChanges) == 0 {
+		stage.Status = "completed"
+		return r.store.DB().Save(stage).Error
+	}
+
+	stage.Status = "pushing"
+	if err := r.store.DB().Save(stage).Error; err != nil {
+		return fmt.Errorf("save stage: %w", err)
+	}
+
+	// 获取DU的id和classCode
+	id, classCode, err := r.dmdb.GetDeployUnitMeta(stage.EnvCode, release.DeployUnitCode)
+	if err != nil {
+		return fmt.Errorf("get du meta: %w", err)
+	}
+
+	// 构建更新项：id + classCode + 变更字段
+	updateItem := map[string]interface{}{
+		"id":        id,
+		"classCode": classCode,
+	}
+	for k, v := range envChanges {
+		updateItem[k] = v
+	}
+
+	results, err := r.dmdb.UpdateDeployUnit(stage.EnvCode, []map[string]interface{}{updateItem})
+	if err != nil {
+		return err
+	}
+	// 检查批量更新的逐项结果
+	if len(results) > 0 && results[0].Status != "updated" {
+		return fmt.Errorf("dmdb update failed: %s (id=%s)", results[0].Status, results[0].Id)
+	}
+
+	stage.Status = "completed"
+	return r.store.DB().Save(stage).Error
+}
+
+// activateChildren 激活子节点（所有父节点 completed 后）
 func (r *ReleaseService) activateChildren(releaseID uint, nodeID uint) {
-	release, _ := r.store.GetReleaseWithStages(releaseID)
-	if release == nil || release.BlueprintID == nil {
+	release, err := r.store.GetReleaseWithStages(releaseID)
+	if err != nil || release == nil || release.BlueprintID == nil {
 		return
 	}
 	children, _ := r.bpService.GetChildNodeIDs(*release.BlueprintID, nodeID)
 	for _, childID := range children {
 		parents, _ := r.bpService.GetParentNodeIDs(*release.BlueprintID, childID)
-		allApproved := true
+		allCompleted := true
 		for _, pid := range parents {
+			found := false
 			for j := range release.Stages {
-				if release.Stages[j].NodeID != nil && *release.Stages[j].NodeID == pid &&
-					release.Stages[j].Status != "approved" {
-					allApproved = false
+				if release.Stages[j].NodeID != nil && *release.Stages[j].NodeID == pid {
+					found = true
+					if release.Stages[j].Status != "completed" {
+						allCompleted = false
+					}
+					break
 				}
 			}
+			if !found {
+				allCompleted = false
+			}
 		}
-		if allApproved {
+		if allCompleted {
 			for j := range release.Stages {
-				if release.Stages[j].NodeID != nil && *release.Stages[j].NodeID == childID {
+				if release.Stages[j].NodeID != nil && *release.Stages[j].NodeID == childID &&
+					release.Stages[j].Status == "pending" {
 					release.Stages[j].Status = "in_progress"
 					r.store.DB().Save(&release.Stages[j])
 					r.autoProgress(releaseID, release.Stages[j].ID)
@@ -185,6 +307,24 @@ func (r *ReleaseService) activateChildren(releaseID uint, nodeID uint) {
 		}
 	}
 }
+
+// checkReleaseCompleted 检查是否所有 sink 节点都已完成
+func (r *ReleaseService) checkReleaseCompleted(release *model.Release) {
+	if release.BlueprintID == nil {
+		return
+	}
+	for j := range release.Stages {
+		if release.Stages[j].NodeID != nil {
+			isSink, _ := r.bpService.IsSinkNode(*release.BlueprintID, *release.Stages[j].NodeID)
+			if isSink && release.Stages[j].Status != "completed" {
+				return
+			}
+		}
+	}
+	release.Status = "completed"
+	r.store.DB().Save(release)
+}
+
 func (r *ReleaseService) ApproveStage(stageID, userID uint, comment string) (*model.Release, error) {
 	if !r.permSvc.CanAction(userID, "approve") {
 		return nil, fmt.Errorf("permission denied")
@@ -196,72 +336,32 @@ func (r *ReleaseService) ApproveStage(stageID, userID uint, comment string) (*mo
 	if stage.Status != "in_progress" {
 		return nil, fmt.Errorf("stage not in progress")
 	}
-	stage.Status = "approved"
-	stage.ApprovedByID = &userID
-	stage.Comment = comment
-	t := time.Now()
-	stage.ApprovedAt = &t
-	r.store.DB().Save(&stage)
 
 	release, err := r.store.GetReleaseWithStages(stage.ReleaseID)
 	if err != nil {
 		return nil, err
 	}
 
-	if release.BlueprintID != nil && stage.NodeID != nil {
-		children, _ := r.bpService.GetChildNodeIDs(*release.BlueprintID, *stage.NodeID)
-		for _, childID := range children {
-			parents, _ := r.bpService.GetParentNodeIDs(*release.BlueprintID, childID)
-			allApproved := true
-			for _, pid := range parents {
-				for j := range release.Stages {
-					if release.Stages[j].NodeID != nil && *release.Stages[j].NodeID == pid &&
-						release.Stages[j].Status != "approved" {
-						allApproved = false
-					}
-				}
-			}
-			if allApproved {
-				for j := range release.Stages {
-					if release.Stages[j].NodeID != nil && *release.Stages[j].NodeID == childID {
-						release.Stages[j].Status = "in_progress"
-						r.store.DB().Save(&release.Stages[j])
-						r.autoProgress(release.ID, release.Stages[j].ID)
-					}
-				}
-			}
-		}
-
-		isSink, _ := r.bpService.IsSinkNode(*release.BlueprintID, *stage.NodeID)
-		if isSink {
-			allSinksApproved := true
-			for j := range release.Stages {
-				if release.Stages[j].NodeID != nil {
-					sink, _ := r.bpService.IsSinkNode(*release.BlueprintID, *release.Stages[j].NodeID)
-					if sink && release.Stages[j].Status != "approved" {
-						allSinksApproved = false
-					}
-				}
-			}
-			if allSinksApproved {
-				release.Status = "completed"
-				r.store.DB().Save(release)
-			}
-		}
-	} else {
-		for i, s := range release.Stages {
-			if s.ID == stageID {
-				if i+1 < len(release.Stages) {
-					release.Stages[i+1].Status = "in_progress"
-					r.store.DB().Save(&release.Stages[i+1])
-				} else {
-					release.Status = "completed"
-					r.store.DB().Save(release)
-				}
-				break
-			}
-		}
+	// 审批通过
+	stage.Status = "approved"
+	stage.ApprovedByID = &userID
+	stage.Comment = comment
+	t := time.Now()
+	stage.ApprovedAt = &t
+	if err := r.store.DB().Save(&stage).Error; err != nil {
+		return nil, fmt.Errorf("save stage: %w", err)
 	}
+
+	// 推送变更到 DMDB
+	if err := r.applyChanges(release, &stage); err != nil {
+		// 推送失败，stage 停留在 pushing，返回错误
+		r.store.DB().Preload("Stages").First(release, release.ID)
+		return release, fmt.Errorf("config push failed: %w (stage stuck in pushing, use retry)", err)
+	}
+
+	// 激活子节点
+	r.activateChildren(release.ID, *stage.NodeID)
+	r.checkReleaseCompleted(release)
 
 	r.store.DB().Preload("Stages").First(release, release.ID)
 	return release, nil
@@ -283,11 +383,18 @@ func (r *ReleaseService) RejectStage(stageID, userID uint, comment string) (*mod
 	stage.Comment = comment
 	t := time.Now()
 	stage.ApprovedAt = &t
-	r.store.DB().Save(&stage)
+	if err := r.store.DB().Save(&stage).Error; err != nil {
+		return nil, fmt.Errorf("save stage: %w", err)
+	}
 
-	release, _ := r.store.GetReleaseWithStages(stage.ReleaseID)
+	release, err := r.store.GetReleaseWithStages(stage.ReleaseID)
+	if err != nil {
+		return nil, fmt.Errorf("get release: %w", err)
+	}
 	release.Status = "failed"
-	r.store.DB().Save(release)
+	if err := r.store.DB().Save(release).Error; err != nil {
+		return nil, fmt.Errorf("save release: %w", err)
+	}
 	r.store.DB().Preload("Stages").First(release, release.ID)
 	return release, nil
 }
@@ -296,18 +403,23 @@ func (r *ReleaseService) RollbackRelease(releaseID, userID uint) (*model.Release
 	if !r.permSvc.CanAction(userID, "manage") {
 		return nil, fmt.Errorf("permission denied")
 	}
-	release, _ := r.store.GetReleaseWithStages(releaseID)
+	release, err := r.store.GetReleaseWithStages(releaseID)
+	if err != nil {
+		return nil, fmt.Errorf("get release: %w", err)
+	}
 	if release.Status != "completed" && release.Status != "in_progress" {
 		return nil, fmt.Errorf("cannot rollback status: %s", release.Status)
 	}
 	release.Status = "rolled_back"
 	for i := range release.Stages {
-		if release.Stages[i].Status == "in_progress" {
+		if release.Stages[i].Status == "in_progress" || release.Stages[i].Status == "pushing" {
 			release.Stages[i].Status = "skipped"
 			r.store.DB().Save(&release.Stages[i])
 		}
 	}
-	r.store.DB().Save(release)
+	if err := r.store.DB().Save(release).Error; err != nil {
+		return nil, fmt.Errorf("save release: %w", err)
+	}
 	return release, nil
 }
 
@@ -322,37 +434,72 @@ func (r *ReleaseService) PromoteToNext(stageID, userID uint) (*model.Release, er
 	if stage.Status != "pending" {
 		return nil, fmt.Errorf("stage not pending")
 	}
-	release, _ := r.store.GetReleaseWithStages(stage.ReleaseID)
+	release, err := r.store.GetReleaseWithStages(stage.ReleaseID)
+	if err != nil {
+		return nil, fmt.Errorf("get release: %w", err)
+	}
 
-	if release.BlueprintID != nil && stage.NodeID != nil {
-		parents, _ := r.bpService.GetParentNodeIDs(*release.BlueprintID, *stage.NodeID)
-		for _, pid := range parents {
-			found := false
-			for _, s := range release.Stages {
-				if s.NodeID != nil && *s.NodeID == pid {
-					if s.Status != "approved" {
-						return nil, fmt.Errorf("parent stage not yet approved")
-					}
-					found = true
-					break
+	if release.BlueprintID == nil {
+		return nil, fmt.Errorf("blueprint required")
+	}
+	if stage.NodeID == nil {
+		return nil, fmt.Errorf("stage has no node")
+	}
+
+	// 检查所有父节点必须 completed
+	parents, _ := r.bpService.GetParentNodeIDs(*release.BlueprintID, *stage.NodeID)
+	for _, pid := range parents {
+		found := false
+		for _, s := range release.Stages {
+			if s.NodeID != nil && *s.NodeID == pid {
+				if s.Status != "completed" {
+					return nil, fmt.Errorf("parent stage not yet completed")
 				}
-			}
-			if !found {
-				return nil, fmt.Errorf("parent stage not found")
+				found = true
+				break
 			}
 		}
-	} else {
-		if stage.PromotionOrder > 0 {
-			for _, s := range release.Stages {
-				if s.PromotionOrder == stage.PromotionOrder-1 && s.Status != "approved" {
-					return nil, fmt.Errorf("previous stage not approved")
-				}
-			}
+		if !found {
+			return nil, fmt.Errorf("parent stage not found")
 		}
 	}
 
 	stage.Status = "in_progress"
-	r.store.DB().Save(&stage)
+	if err := r.store.DB().Save(&stage).Error; err != nil {
+		return nil, fmt.Errorf("save stage: %w", err)
+	}
+	r.autoProgress(release.ID, stage.ID)
+
+	r.store.DB().Preload("Stages").First(release, release.ID)
+	return release, nil
+}
+
+// RetryPush 重试停留在 pushing 状态的 stage
+func (r *ReleaseService) RetryPush(stageID, userID uint) (*model.Release, error) {
+	if !r.permSvc.CanAction(userID, "deploy") {
+		return nil, fmt.Errorf("permission denied")
+	}
+	var stage model.ReleaseStage
+	if err := r.store.DB().First(&stage, stageID).Error; err != nil {
+		return nil, fmt.Errorf("stage not found")
+	}
+	if stage.Status != "pushing" {
+		return nil, fmt.Errorf("stage not in pushing status")
+	}
+
+	release, err := r.store.GetReleaseWithStages(stage.ReleaseID)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := r.applyChanges(release, &stage); err != nil {
+		r.store.DB().Preload("Stages").First(release, release.ID)
+		return release, fmt.Errorf("retry push failed: %w", err)
+	}
+
+	r.activateChildren(release.ID, *stage.NodeID)
+	r.checkReleaseCompleted(release)
+
 	r.store.DB().Preload("Stages").First(release, release.ID)
 	return release, nil
 }
@@ -366,13 +513,14 @@ func (r *ReleaseService) GetRelease(id uint) (*model.Release, error) {
 }
 
 func (r *ReleaseService) GetPendingApprovals(userID uint) ([]model.ReleaseStage, error) {
-	if !r.permSvc.CanAction(userID, "approve") { return nil, nil }
+	if !r.permSvc.CanAction(userID, "approve") {
+		return nil, fmt.Errorf("permission denied")
+	}
 	return r.store.GetStagesByStatus("in_progress")
 }
 
 // WebhookPromote 通过webhook token自动晋级（由外部系统调用）
 func (r *ReleaseService) WebhookPromote(stageID uint, token string) (*model.Release, error) {
-	// 找到对应的stage
 	var stage model.ReleaseStage
 	if err := r.store.DB().First(&stage, stageID).Error; err != nil {
 		return nil, fmt.Errorf("stage not found")
@@ -386,7 +534,6 @@ func (r *ReleaseService) WebhookPromote(stageID uint, token string) (*model.Rele
 		return nil, err
 	}
 
-	// 验证webhook token: 通过stage的NodeID找到蓝图层节点，核对token
 	if release.BlueprintID == nil || stage.NodeID == nil {
 		return nil, fmt.Errorf("not a blueprint release")
 	}
@@ -408,13 +555,13 @@ func (r *ReleaseService) WebhookPromote(stageID uint, token string) (*model.Rele
 		return nil, fmt.Errorf("invalid webhook token")
 	}
 
-	// DAG检查: 所有父节点必须已approved
+	// 检查所有父节点 completed
 	parents, _ := r.bpService.GetParentNodeIDs(*release.BlueprintID, *stage.NodeID)
 	for _, pid := range parents {
 		for _, s := range release.Stages {
 			if s.NodeID != nil && *s.NodeID == pid {
-				if s.Status != "approved" {
-					return nil, fmt.Errorf("parent stage not yet approved")
+				if s.Status != "completed" {
+					return nil, fmt.Errorf("parent stage not yet completed")
 				}
 				break
 			}
@@ -422,7 +569,10 @@ func (r *ReleaseService) WebhookPromote(stageID uint, token string) (*model.Rele
 	}
 
 	stage.Status = "in_progress"
-	r.store.DB().Save(&stage)
+	if err := r.store.DB().Save(&stage).Error; err != nil {
+		return nil, fmt.Errorf("save stage: %w", err)
+	}
+	r.autoProgress(release.ID, stage.ID)
 
 	r.store.DB().Preload("Stages").First(release, release.ID)
 	return release, nil
