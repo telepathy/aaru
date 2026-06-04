@@ -2216,9 +2216,8 @@ async function loadPageBlueprintList(body) {
       return;
     }
     body.innerHTML = bps.map(b=>{
-      const editAction = isAdmin ? `onclick="loadPageBlueprintEditor(${b.id})"` : '';
       const deleteBtn = isAdmin ? `<button class="btn btn-danger btn-xs" onclick="event.stopPropagation();deleteBlueprint(${b.id})" style="margin-left:12px">删除</button>` : '';
-      return `<div class="blueprint-list-item" ${editAction} style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;${isAdmin?'cursor:pointer':''}">
+      return `<div class="blueprint-list-item" onclick="loadPageBlueprintEditor(${b.id})" style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;cursor:pointer">
         <div><strong>${escapeHtml(b.name)}</strong><br><span style="font-size:12px;color:var(--text-muted)">${escapeHtml(b.description||'')}</span></div>
         <div style="font-size:12px;color:var(--text-muted);text-align:right">${b.node_count} 节点 · ${b.edge_count} 边${deleteBtn}</div>
       </div>`;
