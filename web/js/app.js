@@ -1688,7 +1688,8 @@ async function renderApprovals(body) {
       <table class="data-table"><thead><tr><th>发布单</th><th>环境</th><th>部署单元</th><th>版本</th><th>申请时间</th><th>操作</th></tr></thead><tbody>${stages.map(s=>`<tr>
         <td><a href="#" class="text-link" onclick="loadPage('release-detail',${s.release_id});return false">#${s.release_id}</a></td>
         <td>${escapeHtml(s.env_name||s.env_code)}</td>
-        <td>-</td><td>-</td>
+        <td>${escapeHtml(s.release?.deploy_unit_code||'-')}</td>
+        <td><code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-size:12px">${escapeHtml(s.release?.version||'-')}</code></td>
         <td>${fmtTime(s.created_at)}</td>
         <td class="action-group">
           <button class="btn btn-sm btn-success" onclick="approveStage(${s.id})">通过</button>

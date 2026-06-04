@@ -159,7 +159,7 @@ func (s *DBStore) CreateReleaseStage(stage *model.ReleaseStage) error {
 }
 func (s *DBStore) GetStagesByStatus(status string) ([]model.ReleaseStage, error) {
 	var stages []model.ReleaseStage
-	err := s.db.Where("status = ?", status).Preload("ApprovedBy").Find(&stages).Error
+	err := s.db.Where("status = ?", status).Preload("ApprovedBy").Preload("Release").Find(&stages).Error
 	return stages, err
 }
 

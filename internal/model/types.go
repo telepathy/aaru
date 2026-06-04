@@ -109,6 +109,7 @@ func (r *Release) BeforeCreate(tx *gorm.DB) error {
 type ReleaseStage struct {
 	ID             uint       `gorm:"primaryKey" json:"id"`
 	ReleaseID      uint       `gorm:"index" json:"release_id"`
+	Release        *Release   `gorm:"foreignKey:ReleaseID" json:"release,omitempty"`
 	NodeID         *uint      `json:"node_id,omitempty"`
 	EnvCode        string     `gorm:"size:64" json:"env_code"`
 	EnvName        string     `gorm:"size:128" json:"env_name"`
