@@ -18,7 +18,7 @@ curl -X POST http://localhost:8080/api/init \
 
 ### 登录
 
-- **GitLab SSO**：配置 `aaru.yaml` 中的 `gitlab.app_id` 后，登录页显示"使用 GitLab 登录"按钮
+- **GitLab SSO**：设置环境变量 `AARU_GITLAB_APP_ID` 后，登录页显示"使用 GitLab 登录"按钮
 - **Mock 登录**：开发环境下直接选择用户登录
 
 ## 角色与权限
@@ -129,25 +129,22 @@ curl -X POST http://localhost:8080/api/init \
 - 右侧展示 DU 详情及各环境版本对比
 - 支持"详细比对"查看跨环境完整配置差异
 
-## 配置文件
+## 配置
 
-`aaru.yaml` 示例：
+支持 YAML 文件 + 环境变量覆盖。优先级：**环境变量 > YAML 文件 > 默认值**。
+
+YAML 文件查找顺序：`./aaru.yaml` → `~/.aaru/config.yaml`
 
 ```yaml
 server_host: "127.0.0.1:8080"
-db_driver: "mysql"
 dsn: "root:pass@tcp(127.0.0.1:3306)/aaru?charset=utf8mb4&parseTime=True&loc=Local"
 jwt_secret: "your-secret-key"
-
 dmdb:
   server_address: "http://127.0.0.1:3632"
   token: "your-dmdb-token"
-
 devops:
   server_address: "http://localhost:8733"
-
 gitlab:
-  enabled: true
   url: "http://localhost"
   app_id: "your-app-id"
   app_secret: "your-app-secret"
@@ -157,12 +154,32 @@ gitlab:
     - bob
 ```
 
+环境变量（覆盖同名配置）：
+
+| 变量 | 对应配置 |
+|------|----------|
+| `AARU_SERVER_HOST` | `server_host` |
+| `AARU_DSN` | `dsn` |
+| `AARU_JWT_SECRET` | `jwt_secret` |
+| `AARU_DMDB_URL` | `dmdb.server_address` |
+| `AARU_DMDB_TOKEN` | `dmdb.token` |
+| `AARU_DEVOPS_URL` | `devops.server_address` |
+| `AARU_GITLAB_URL` | `gitlab.url` |
+| `AARU_GITLAB_APP_ID` | `gitlab.app_id`（设置后自动启用 SSO） |
+| `AARU_GITLAB_APP_SECRET` | `gitlab.app_secret` |
+| `AARU_GITLAB_CALLBACK_URL` | `gitlab.callback_url` |
+
 ## 启动
 
 ```bash
-# 开发模式（SQLite）
+# 开发模式（使用默认配置或 aaru.yaml）
 go run ./cmd/api
 
-# 生产模式（MySQL）
-DB_DRIVER=mysql DSN="user:pass@tcp(host:3306)/aaru" go run ./cmd/api
+# 生产模式（环境变量覆盖）
+AARU_DSN="user:pass@tcp(host:3306)/aaru?charset=utf8mb4&parseTime=True&loc=Local" \
+AARU_JWT_SECRET="your-secret-key" \
+go run ./cmd/api
+
+# 构建静态二进制（前端已内嵌，单文件部署）
+go build -o aaru ./cmd/api
 ```

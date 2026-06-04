@@ -5,26 +5,18 @@ import (
 
 	"aaru/internal/model"
 	"gorm.io/driver/mysql"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
 
 type DBStore struct{ db *gorm.DB }
 
-func NewDBStore(driver, dsn, dbPath string) (*DBStore, error) {
-	var dialector gorm.Dialector
-	switch driver {
-	case "mysql":
-		if dsn == "" {
-			return nil, fmt.Errorf("mysql driver requires dsn")
-		}
-		dialector = mysql.Open(dsn)
-	default: // sqlite
-		dialector = sqlite.Open(dbPath)
+func NewDBStore(dsn string) (*DBStore, error) {
+	if dsn == "" {
+		return nil, fmt.Errorf("mysql dsn is required")
 	}
 
-	db, err := gorm.Open(dialector, &gorm.Config{
+	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Warn),
 	})
 	if err != nil {

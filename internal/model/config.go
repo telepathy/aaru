@@ -8,15 +8,12 @@ import (
 )
 
 type Config struct {
-	ServerHost  string       `yaml:"server_host,omitempty"`
-	DBDriver    string       `yaml:"db_driver,omitempty"` // sqlite 或 mysql
-	DSN         string       `yaml:"dsn,omitempty"`       // MySQL DSN，如 user:pass@tcp(host:port)/dbname?charset=utf8mb4&parseTime=True&loc=Local
-	DbPath      string       `yaml:"db_path,omitempty"`   // SQLite 文件路径（db_driver=sqlite 时使用）
-	JwtSecret   string       `yaml:"jwt_secret,omitempty"`
-	DMDB        DMDBConfig   `yaml:"dmdb"`
-	DevOps      DevOpsConfig `yaml:"devops"`
-	Gitlab      GitlabMock   `yaml:"gitlab"`
-	PromotePlan []EnvConfig  `yaml:"promote_plan"`
+	ServerHost string       `yaml:"server_host,omitempty"`
+	DSN        string       `yaml:"dsn,omitempty"`
+	JwtSecret  string       `yaml:"jwt_secret,omitempty"`
+	DMDB       DMDBConfig   `yaml:"dmdb"`
+	DevOps     DevOpsConfig `yaml:"devops"`
+	Gitlab     GitlabMock   `yaml:"gitlab"`
 }
 
 type DMDBConfig struct {
@@ -29,46 +26,42 @@ type DevOpsConfig struct {
 }
 
 type GitlabMock struct {
-	Enabled    bool     `yaml:"enabled"`
-	Users      []string `yaml:"users"`
-	URL        string   `yaml:"url"`         // GitLab URL, e.g. http://localhost
-	AppID      string   `yaml:"app_id"`      // OAuth Application ID
-	AppSecret  string   `yaml:"app_secret"`  // OAuth Application Secret
-	CallbackURL string  `yaml:"callback_url"` // e.g. http://localhost:8080/auth/gitlab/callback
+	Enabled     bool     `yaml:"enabled"`
+	Users       []string `yaml:"users"`
+	URL         string   `yaml:"url"`
+	AppID       string   `yaml:"app_id"`
+	AppSecret   string   `yaml:"app_secret"`
+	CallbackURL string   `yaml:"callback_url"`
 }
 
-type EnvConfig struct {
-	Code string `yaml:"code"`
-	Name string `yaml:"name"`
+var configPaths = []string{
+	filepath.Join(".", "aaru.yaml"),
+	filepath.Join(os.Getenv("HOME"), ".aaru", "config.yaml"),
 }
 
-func LoadConfigFromEnv() *Config {
-	home, _ := os.UserHomeDir()
-	path := filepath.Join(home, ".aaru", "config.yaml")
-	cfg, err := LoadConfig(path)
-	if err != nil {
-		// return default
-		return getDefaultConfig()
+// LoadConfig 加载配置：先从 YAML 文件读取，再用环境变量覆盖。
+func LoadConfig() *Config {
+	cfg := defaultConfig()
+
+	// 尝试从 YAML 文件加载
+	for _, p := range configPaths {
+		if _, err := os.Stat(p); err == nil {
+			if data, err := os.ReadFile(p); err == nil {
+				yaml.Unmarshal(data, cfg)
+			}
+			break
+		}
 	}
+
+	// 环境变量覆盖
+	applyEnvOverrides(cfg)
 	return cfg
 }
 
-func LoadConfig(path string) (*Config, error) {
-	config := getDefaultConfig()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return config, nil
-	}
-	err = yaml.Unmarshal(data, config)
-	return config, err
-}
-
-func getDefaultConfig() *Config {
+func defaultConfig() *Config {
 	return &Config{
 		ServerHost: "127.0.0.1:8080",
-		DBDriver:   "sqlite",
-		DSN:        "",
-		DbPath:     filepath.Join(os.TempDir(), "aaru.db"),
+		DSN:        "root:aaru123@tcp(127.0.0.1:3306)/aaru?charset=utf8mb4&parseTime=True&loc=Local",
 		JwtSecret:  "aaru-dev-secret-change-in-production",
 		DMDB: DMDBConfig{
 			ServerAddress: "http://127.0.0.1:3632",
@@ -77,14 +70,30 @@ func getDefaultConfig() *Config {
 			ServerAddress: "http://127.0.0.1:8733",
 		},
 		Gitlab: GitlabMock{
-			Enabled: true,
-			Users:   []string{"alice", "bob", "charlie"},
+			Users: []string{"alice", "bob", "charlie"},
+			URL:   "http://localhost",
 		},
-		PromotePlan: []EnvConfig{
-			{Code: "dev", Name: "开发环境"},
-			{Code: "test", Name: "测试环境"},
-			{Code: "uat", Name: "UAT环境"},
-			{Code: "prod", Name: "生产环境"},
-		},
+	}
+}
+
+func applyEnvOverrides(cfg *Config) {
+	setIfPresent(&cfg.ServerHost, "AARU_SERVER_HOST")
+	setIfPresent(&cfg.DSN, "AARU_DSN")
+	setIfPresent(&cfg.JwtSecret, "AARU_JWT_SECRET")
+	setIfPresent(&cfg.DMDB.ServerAddress, "AARU_DMDB_URL")
+	setIfPresent(&cfg.DMDB.Token, "AARU_DMDB_TOKEN")
+	setIfPresent(&cfg.DevOps.ServerAddress, "AARU_DEVOPS_URL")
+	setIfPresent(&cfg.Gitlab.URL, "AARU_GITLAB_URL")
+	setIfPresent(&cfg.Gitlab.AppID, "AARU_GITLAB_APP_ID")
+	setIfPresent(&cfg.Gitlab.AppSecret, "AARU_GITLAB_APP_SECRET")
+	setIfPresent(&cfg.Gitlab.CallbackURL, "AARU_GITLAB_CALLBACK_URL")
+	if cfg.Gitlab.AppID != "" {
+		cfg.Gitlab.Enabled = true
+	}
+}
+
+func setIfPresent(field *string, envKey string) {
+	if v := os.Getenv(envKey); v != "" {
+		*field = v
 	}
 }

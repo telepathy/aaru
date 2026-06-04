@@ -4,10 +4,9 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"os"
-	"path/filepath"
 	"time"
 
+	"aaru"
 	"aaru/internal/handler"
 	"aaru/internal/model"
 	"aaru/internal/service"
@@ -15,14 +14,9 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-var defaultConfigPaths = []string{
-	filepath.Join(".", "aaru.yaml"),
-	filepath.Join(os.Getenv("HOME"), ".aaru", "config.yaml"),
-}
-
 func main() {
-	config := loadConfig()
-	dbStore, err := store.NewDBStore(config.DBDriver, config.DSN, config.DbPath)
+	config := model.LoadConfig()
+	dbStore, err := store.NewDBStore(config.DSN)
 	if err != nil {
 		log.Fatalf("init db: %v", err)
 	}
@@ -45,25 +39,9 @@ func main() {
 
 	r := gin.Default()
 	setupCORS(r)
-	handler.RegisterRoutes(r, dbStore, authService, dmdbClient, releaseService, bpService, config.Gitlab.Users)
+	handler.RegisterRoutes(r, dbStore, authService, dmdbClient, releaseService, bpService, config.Gitlab.Users, aaru.WebFS)
 
 	startServer(r, config.ServerHost)
-}
-
-func loadConfig() *model.Config {
-	for _, p := range defaultConfigPaths {
-		if _, err := os.Stat(p); err == nil {
-			cfg, err := model.LoadConfig(p)
-			if err != nil {
-				log.Printf("load config error: %v, using defaults", err)
-				return model.LoadConfigFromEnv()
-			}
-			return cfg
-		}
-	}
-	cfg := model.LoadConfigFromEnv()
-	log.Printf("no config file, using defaults")
-	return cfg
 }
 
 func initDefaults(dbStore *store.DBStore) {

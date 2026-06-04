@@ -1,6 +1,9 @@
 package handler
 
 import (
+	"html/template"
+	"io/fs"
+	"net/http"
 	"strings"
 
 	"aaru/internal/middleware"
@@ -24,6 +27,7 @@ func RegisterRoutes(
 	releaseService *service.ReleaseService,
 	bpService *service.BlueprintService,
 	mockUsers []string,
+	webFS fs.FS,
 ) {
 	authMiddleware := middleware.NewAuthMiddleware(authService)
 	authHandler := NewAuthHandler(authService, store, mockUsers)
@@ -32,18 +36,23 @@ func RegisterRoutes(
 	adminHandler := NewAdminHandler(store, authService)
 	bpHandler := NewBlueprintHandler(bpService, store)
 
-	r.SetFuncMap(map[string]interface{}{
+	// 模板：从 embed.FS 加载
+	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
 		"upperFirst": upperFirst,
-	})
-	r.LoadHTMLGlob("web/templates/*")
+	}).ParseFS(webFS, "web/templates/*.html"))
+	r.SetHTMLTemplate(tmpl)
 
-	// 静态文件禁用缓存（开发环境）
-	r.Static("/static", "web")
+	// 静态文件：从 embed.FS 提供，禁用缓存
+	webSub, _ := fs.Sub(webFS, "web")
+	staticFS := http.StripPrefix("/static/", http.FileServer(http.FS(webSub)))
 	r.Use(func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/static/") {
 			c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
 			c.Header("Pragma", "no-cache")
 			c.Header("Expires", "0")
+			staticFS.ServeHTTP(c.Writer, c.Request)
+			c.Abort()
+			return
 		}
 		c.Next()
 	})

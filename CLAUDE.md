@@ -5,18 +5,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-# Run the server (defaults to localhost:8080, SQLite at /tmp/aaru.db)
+# Run the server (defaults to localhost:8080, MySQL at 127.0.0.1:3306)
 go run ./cmd/api
 
-# Build
-go build ./cmd/api
+# Build (static binary, frontend embedded)
+go build -o aaru ./cmd/api
 ```
 
 There are no tests, linters, or code generators configured.
 
 ## Architecture
 
-Aaru is a Go + vanilla HTML/CSS/JS single-page application for managing deployment release pipelines across multiple environments. It uses Gin for HTTP routing, GORM for persistence (SQLite or MySQL), and JWT for authentication.
+Aaru is a Go + vanilla HTML/CSS/JS single-page application for managing deployment release pipelines across multiple environments. It uses Gin for HTTP routing, GORM for persistence (MySQL), and JWT for authentication. Frontend assets are embedded into the binary via `//go:embed`.
 
 ### Layers (top to bottom)
 
@@ -25,7 +25,7 @@ cmd/api/main.go          — entry point, wires everything, starts server
 internal/handler/        — Gin HTTP handlers (thin, delegate to services)
 internal/middleware/      — JWT auth middleware (Bearer header or cookie)
 internal/service/         — business logic (auth, RBAC, releases, blueprints, DMDB client)
-internal/store/           — GORM persistence (all CRUD), supports SQLite and MySQL
+internal/store/           — GORM persistence (all CRUD), MySQL only
 internal/model/           — GORM models + config structs
 web/                      — static frontend (templates/, js/, css/)
 ```
@@ -55,9 +55,9 @@ web/                      — static frontend (templates/, js/, css/)
 
 **Auth** (`internal/service/auth.go`, `internal/middleware/auth.go`): Mock GitLab SSO — login page shows configured mock users. JWT stored in cookie or Authorization header. `RequireAuth()` middleware for `/api/*`.
 
-**Config** (`internal/model/config.go`): Looks for `./aaru.yaml`, then `~/.aaru/config.yaml`, then falls back to defaults. Supports `db_driver` (`sqlite` or `mysql`) and `dsn` (MySQL connection string). See `aaru.yaml` for an example.
+**Config** (`internal/model/config.go`): YAML file (`./aaru.yaml` or `~/.aaru/config.yaml`) with environment variable overrides. Env vars take precedence. See README.md for the full list.
 
-**Database** (`internal/store/db.go`): GORM-based, supports SQLite (default, file path via `db_path`) and MySQL (via `db_driver: mysql` + `dsn`). Auto-migrates all models on startup.
+**Database** (`internal/store/db.go`): GORM-based, MySQL only. DSN from `AARU_DSN` env var. Auto-migrates all models on startup.
 
 **Frontend** (`web/`): Single JS file (`js/app.js`, ~1300 lines) implementing SPA navigation, and a DAG editor using SVG + vanilla JS with drag, bezier-curve edges, and auto-layout. No bundler, no framework.
 

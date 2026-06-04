@@ -16,16 +16,8 @@ jobs:
         include:
           - goos: linux
             goarch: amd64
-            suffix: ''
           - goos: linux
             goarch: arm64
-            suffix: ''
-          - goos: darwin
-            goarch: amd64
-            suffix: ''
-          - goos: darwin
-            goarch: arm64
-            suffix: ''
 
     steps:
       - name: Checkout
@@ -69,5 +61,3 @@ jobs:
           files: |
             artifacts/aaru-linux-amd64/aaru-linux-amd64
             artifacts/aaru-linux-arm64/aaru-linux-arm64
-            artifacts/aaru-darwin-amd64/aaru-darwin-amd64
-            artifacts/aaru-darwin-arm64/aaru-darwin-arm64
