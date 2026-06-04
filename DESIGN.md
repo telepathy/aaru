@@ -21,7 +21,7 @@
 │  ├─ PermissionService  角色+竖井+环境权限校验             │
 │  ├─ ReleaseService     发布生命周期管理                   │
 │  ├─ BlueprintService   蓝图 DAG 管理与校验               │
-│  └─ DMDBClient         外部 DMDB/DevOps API 代理         │
+│  └─ DMDBClient         DMDB + Dalaran API 代理            │
 └──────────────────────┬──────────────────────────────────┘
                        │
 ┌──────────────────────▼──────────────────────────────────┐
@@ -258,21 +258,30 @@ api_hook: pending ──> in_progress ──> approved ──> pushing ──> c
 | POST | `/api/admin/roles` | 创建角色 |
 | PUT | `/api/admin/roles/:id/permissions` | 设置角色权限 |
 
-## DMDB 集成
+## 外部系统集成
 
-Aaru 代理以下 DMDB/DevOps API：
+### DMDB — 配置管理数据库
+
+DMDB 维护各环境的部署单元配置数据。Aaru 通过 DMDB API 读取配置、对比差异、推送变更。
 
 | Aaru 方法 | 上游接口 | 说明 |
 |-----------|---------|------|
-| ListEnvironments | `GET /api/list/env` | DMDB |
-| ListSilos | `GET /api/list/silo` | DMDB |
-| ListSystems | `GET /api/list/system` | DMDB |
-| QueryDeployUnits | `GET /api/query-du/{env}` | DMDB |
-| GetDeployUnitByCode | `GET /api/get-du/{env}/{code}` | DMDB |
-| ListAllDUs | `GET /api/v1/devops/list-du/` | DevOps (8733) |
-| UpdateDeployUnit | `POST /api/du-batch-update/{env}` | DMDB（需 token） |
+| ListEnvironments | `GET /api/list/env` | 环境列表 |
+| ListSilos | `GET /api/list/silo` | 竖井列表 |
+| ListSystems | `GET /api/list/system` | 系统列表 |
+| QueryDeployUnits | `GET /api/query-du/{env}` | 按环境查询 DU |
+| GetDeployUnitByCode | `GET /api/get-du/{env}/{code}` | 获取单个 DU |
+| CompareDUConfig | 并发获取所有环境 DU → 扁平化 → 对比 | 跨环境配置对比 |
+| UpdateDeployUnit | `POST /api/du-batch-update/{env}` | 批量更新（需 token） |
 
-### 配置推送
+配置项（`aaru.yaml`）：
+```yaml
+dmdb:
+  server_address: "http://127.0.0.1:3632"
+  token: "your-dmdb-token"  # 缓存模式下必须
+```
+
+#### 配置推送流程
 
 发布审批通过后，`applyChanges` 构建更新请求：
 
@@ -280,18 +289,53 @@ Aaru 代理以下 DMDB/DevOps API：
 [{"id": "du-id", "classCode": "du-class", "ArtifactVersion": "v2.3.0", ...}]
 ```
 
-调用 DMDB 的 `POST /api/du-batch-update/{env}` 批量更新接口。
+调用 `POST /api/du-batch-update/{env}` 批量更新接口。响应中每个 item 有 `status` 字段（`updated`/`not_found`/`forbidden` 等）。
 
-### initDb URL Tag 同步
+#### initDb URL Tag 同步
 
-当 `ArtifactVersion` 变更时，以下字段中的 git blob URL（`/blob/TAG/...`）自动替换为新版本 tag：
+当 `ArtifactVersion` 变更时，以下字段中的 git blob URL（`/blob/TAG/path`）自动替换为新版本 tag：
 
-- `initDb`
-- `initDbAuth`
-- `initDbFinal`
-- `ImportData`
+- `initDb` — 数据库初始化脚本
+- `initDbAuth` — 认证库初始化脚本
+- `initDbFinal` — 最终初始化脚本
+- `ImportData` — 数据导入配置
 
-前端预计算并提交，后端存储后推送。
+前端在预览和提交时预计算替换结果，后端存储后推送至 DMDB。
+
+### Dalaran — 产品树与部署单元管理
+
+Dalaran（端口 8733）维护产品树结构（竖井 → 系统 → 部署单元），提供全局 DU 视图。
+
+| Aaru 方法 | 上游接口 | 说明 |
+|-----------|---------|------|
+| ListAllDUs | `GET /api/v1/devops/list-du/?silo=&system=` | 全量 DU 列表，支持筛选 |
+
+配置项（`aaru.yaml`）：
+```yaml
+devops:
+  server_address: "http://localhost:8733"
+```
+
+#### Dalaran 数据模型
+
+```go
+type DevOpsDUItem struct {
+    Code   string // DU 唯一编码
+    Silo   string // 所属竖井
+    System string // 所属系统
+    Repo   string // 代码仓库地址
+}
+```
+
+#### 在 Aaru 中的用途
+
+- **部署单元浏览页**：从 Dalaran 获取 DU 列表（而非逐环境查询 DMDB），支持按竖井/系统筛选
+- **权限配置**：竖井下拉选项从 Dalaran 的 DU 列表提取唯一 `silo` 值
+- **批量发布**：多 DU 选择时使用 Dalaran 列表作为数据源
+
+#### 与 DMDB 的关系
+
+Dalaran 提供产品树视角（哪些 DU 存在），DMDB 提供环境配置视角（某个 DU 在某环境的具体配置）。Aaru 从 Dalaran 获取 DU 列表，从 DMDB 获取/更新具体配置。
 
 ## 认证
 
