@@ -1,6 +1,7 @@
 package service
 
 import (
+	"crypto/tls"
 	"fmt"
 	"log"
 	"time"
@@ -50,6 +51,7 @@ type GitlabUser struct {
 // ExchangeCode 用授权码换取 access token 并获取用户信息
 func (a *AuthService) ExchangeCode(code string) (*GitlabUser, error) {
 	client := resty.New()
+	client.SetTLSClientConfig(&tls.Config{InsecureSkipVerify: true})
 
 	log.Printf("[GitLab SSO] exchanging code, gitlabURL=%s, clientID=%s, callbackURL=%s",
 		a.gitlabURL, a.gitlabAppID, a.callbackURL)
