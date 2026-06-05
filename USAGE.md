@@ -21,6 +21,17 @@ curl -X POST http://localhost:8080/api/init \
 - **GitLab SSO**：设置环境变量 `AARU_GITLAB_APP_ID` 后，登录页显示"使用 GitLab 登录"按钮
 - **Mock 登录**：开发环境下直接选择用户登录
 
+### GitLab SSO 用户匹配
+
+SSO 登录时，系统根据 GitLab 返回的 `username` 字段在 Aaru 中查找同名用户：
+
+1. **已存在同名用户**（如通过批量导入预创建）→ 直接登录，保留原有角色和权限，更新 GitLab ID、头像、邮箱
+2. **不存在同名用户** → 自动创建新用户，分配 `viewer` 角色
+
+这意味着管理员可以**提前批量导入用户并分配好角色权限**，GitLab SSO 用户登录时自动继承这些配置。支持自签名证书的 GitLab 实例（自动跳过 TLS 证书验证）。
+
+DSN 中如缺少 `parseTime=True` 参数，系统启动时会自动补充。
+
 ## 角色与权限
 
 系统内置 4 个角色：

@@ -31,6 +31,37 @@
 └─────────────────────────────────────────────────────────┘
 ```
 
+## 启动初始化
+
+`initDefaults` 在每次启动时执行，按 `roles` 表是否有数据分两条路径：
+
+### 已有数据（增量修补）
+
+1. 补创缺失的 `viewer` 角色（`*` + `view` 权限）
+2. 为 `allowed_silos` 为空的 admin 用户设置 `"*"`
+3. 清理废弃的 `approver-*` 环境审批角色
+
+**不会删除或覆盖**已有用户、角色、权限或业务数据。
+
+### 全新安装
+
+创建四个角色及权限：
+
+| 角色 | 权限 |
+|------|------|
+| admin | deploy, approve, view, manage |
+| developer | deploy, view |
+| operator | approve, view |
+| viewer | view |
+
+### DSN 保障
+
+启动时自动检测 DSN 中是否包含 `parseTime=True`，缺失则自动补充，确保 `time.Time` 字段正常解析。
+
+### 数据迁移
+
+`AutoMigrate` 仅做增量操作（新增表/列），不删除已有数据或修改列类型。
+
 ## 数据模型
 
 ### User
@@ -41,7 +72,7 @@
 | username | string | 唯一，SSO 关联键 |
 | email | string | 邮箱 |
 | avatar_url | string | 头像 URL |
-| gitlab_id | int64 | GitLab 用户 ID（唯一） |
+| gitlab_id | int64 | GitLab 用户 ID（普通索引，允许为空或零值） |
 | allowed_silos | string | 可用竖井：`""`/`"*"`/`"silo1,silo2"` |
 | allowed_envs | string | 可用环境（仅 operator）：格式同上 |
 | roles | []Role | 多对多（user_roles） |
@@ -341,9 +372,13 @@ Dalaran 提供产品树视角（哪些 DU 存在），DMDB 提供环境配置视
 
 1. 浏览器跳转 `GitLab /oauth/authorize`
 2. 用户授权后回调 `/auth/gitlab/callback?code=xxx`
-3. 后端用 code 换 token，再用 token 获取用户信息
-4. 按 username 匹配或创建 Aaru 用户
-5. 新用户自动分配 viewer 角色
+3. 后端用 code 换 token，再用 token 获取用户信息（自动跳过 TLS 证书验证，支持自签名 GitLab）
+4. 按 GitLab 返回的 `username` 在 Aaru 中匹配已有用户：
+   - **已存在** → 直接登录，保留原有角色/权限，更新 GitLab ID、头像、邮箱
+   - **不存在** → 自动创建，分配 `viewer` 角色
+5. 生成 JWT，设为 httpOnly Cookie，重定向到首页
+
+管理员可通过"批量导入"预先创建用户并分配角色，SSO 用户登录时自动继承。
 
 ## 前端架构
 
