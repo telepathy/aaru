@@ -463,16 +463,21 @@ func (r *ReleaseService) checkReleaseCompleted(release *model.Release) {
 	if release.BlueprintID == nil {
 		return
 	}
-	for j := range release.Stages {
-		if release.Stages[j].NodeID != nil {
-			isSink, _ := r.bpService.IsSinkNode(*release.BlueprintID, *release.Stages[j].NodeID)
-			if isSink && release.Stages[j].Status != "completed" {
+	// 重新加载 release 以获取最新的 stage 状态（stage 可能已通过独立对象保存到 DB）
+	fresh, err := r.store.GetReleaseWithStages(release.ID)
+	if err != nil {
+		return
+	}
+	for j := range fresh.Stages {
+		if fresh.Stages[j].NodeID != nil {
+			isSink, _ := r.bpService.IsSinkNode(*fresh.BlueprintID, *fresh.Stages[j].NodeID)
+			if isSink && fresh.Stages[j].Status != "completed" {
 				return
 			}
 		}
 	}
-	release.Status = "completed"
-	r.store.DB().Save(release)
+	fresh.Status = "completed"
+	r.store.DB().Save(fresh)
 }
 
 func (r *ReleaseService) ApproveStage(stageID, userID uint, comment string) (*model.Release, error) {
