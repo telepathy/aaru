@@ -16,6 +16,7 @@ let crPerEnvMode = new Set(); // fields in per-env mode
 let crPerEnvVals = {};        // {fieldName: {envCode: val}}
 let crTitleAutoGen = true;    // 标题是否为自动生成（未被用户手动修改）
 let crDiffKeys = [];          // step2 中有差异的字段列表，用于带入 step3
+let crDiffKeysApplied = false; // 差异字段是否已带入 step3（防止重复进入时重复添加）
 
 // All editable fields grouped
 const CR_SCALAR_FIELDS = [
@@ -43,7 +44,7 @@ const CR_FIELD_GROUPS = [
 async function renderCreateRelease(body, actions) {
   crStep = 1; crTitle = ''; crSelectedDU = null; crSnapshots = [];
   crChanges = {}; crExtraFields = []; crSelectedBP = null; crBlueprintEnvs = new Set();
-  crPerEnvMode = new Set(); crPerEnvVals = {}; crTitleAutoGen = true; crDiffKeys = [];
+  crPerEnvMode = new Set(); crPerEnvVals = {}; crTitleAutoGen = true; crDiffKeys = []; crDiffKeysApplied = false;
   body.style.overflow = 'hidden';
   body.style.display = 'flex';
   body.style.flexDirection = 'column';
@@ -236,14 +237,15 @@ window.crGoBack = function(step) {
 window.crGoStep3 = function() {
   crStep = 3;
   if (!crChanges.ArtifactVersion && crChanges.ArtifactVersion!=='') crChanges = { ArtifactVersion: '' };
-  // 将 step2 中有差异的字段自动带入变更列表
-  if (crDiffKeys.length > 0) {
+  // 首次进入 step3 时，将 step2 中有差异的字段自动带入变更列表
+  if (!crDiffKeysApplied && crDiffKeys.length > 0) {
     crDiffKeys.forEach(f => {
       if (f !== 'ArtifactVersion' && !crExtraFields.includes(f)) {
         crExtraFields.push(f);
         if (!(f in crChanges)) crChanges[f] = '';
       }
     });
+    crDiffKeysApplied = true;
   }
   try { crRenderStep(document.getElementById('content-body')); } catch(e) { toast('页面渲染失败: '+e.message,'error'); console.error(e); }
 };

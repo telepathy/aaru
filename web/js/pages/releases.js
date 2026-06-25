@@ -476,7 +476,7 @@ function toggleAllReleases(el) {
 
 async function batchDeprecateReleases() {
   const checked = getCheckedReleases();
-  const targets = checked.filter(c => c.status !== 'deprecated' && c.status !== 'completed');
+  const targets = checked.filter(c => c.status !== 'deprecated' && c.status !== 'completed' && c.status !== 'draft');
   if (targets.length === 0) { toast('没有可废弃的发布','error'); return; }
   if (!confirm(`确认废弃 ${targets.length} 个发布？`)) return;
   let ok = 0, fail = 0;
