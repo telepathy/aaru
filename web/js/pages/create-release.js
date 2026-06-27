@@ -17,6 +17,7 @@ let crPerEnvVals = {};        // {fieldName: {envCode: val}}
 let crTitleAutoGen = true;    // 标题是否为自动生成（未被用户手动修改）
 let crDiffKeys = [];          // step2 中有差异的字段列表，用于带入 step3
 let crDiffKeysApplied = false; // 差异字段是否已带入 step3（防止重复进入时重复添加）
+let crAutoSyncInitDb = true;   // 是否自动同步 initDb 类字段的 URL tag
 
 // All editable fields grouped
 const CR_SCALAR_FIELDS = [
@@ -44,7 +45,7 @@ const CR_FIELD_GROUPS = [
 async function renderCreateRelease(body, actions) {
   crStep = 1; crTitle = ''; crSelectedDU = null; crSnapshots = [];
   crChanges = {}; crExtraFields = []; crSelectedBP = null; crBlueprintEnvs = new Set();
-  crPerEnvMode = new Set(); crPerEnvVals = {}; crTitleAutoGen = true; crDiffKeys = []; crDiffKeysApplied = false;
+  crPerEnvMode = new Set(); crPerEnvVals = {}; crTitleAutoGen = true; crDiffKeys = []; crDiffKeysApplied = false; crAutoSyncInitDb = true;
   body.style.overflow = 'hidden';
   body.style.display = 'flex';
   body.style.flexDirection = 'column';
@@ -263,6 +264,15 @@ function crStep3() {
       <div class="cr-section"><div class="cr-section-title">其他变更字段</div>
         ${crExtraFields.map(f=>crRenderExtraField(f)).join('')}
         <button class="cr-add-field-btn" onclick="crOpenFieldModal()">+ 添加字段</button>
+      </div>
+      <div class="cr-section" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:12px 16px">
+        <div style="display:flex;align-items:center;gap:12px">
+          <button class="btn btn-sm ${crAutoSyncInitDb?'btn-primary':'btn-secondary'}" id="cr-auto-sync-btn" onclick="crToggleAutoSync()" style="white-space:nowrap">${crAutoSyncInitDb?'✓ 已开启':'✗ 已关闭'}</button>
+          <div>
+            <div style="font-size:13px;font-weight:500">自动同步 initDb URL tag</div>
+            <div style="font-size:11px;color:var(--text-muted)">开启时，提交后会自动将 initDb / initDbAuth / initDbFinal / ImportData 中代码仓库 URL 的 tag 替换为新版本号</div>
+          </div>
+        </div>
       </div>`,
     actions: `
       <button class="btn btn-secondary" onclick="crGoBack(2)">← 上一步</button>
@@ -481,6 +491,15 @@ window.crSetChange = function(f, v) {
   if (f === 'ArtifactVersion') crAutoGenTitle();
 };
 
+window.crToggleAutoSync = function() {
+  crAutoSyncInitDb = !crAutoSyncInitDb;
+  const btn = document.getElementById('cr-auto-sync-btn');
+  if (btn) {
+    btn.className = `btn btn-sm ${crAutoSyncInitDb?'btn-primary':'btn-secondary'}`;
+    btn.textContent = crAutoSyncInitDb?'✓ 已开启':'✗ 已关闭';
+  }
+};
+
 function crAutoGenTitle() {
   if (!crTitleAutoGen) return;
   const code = crSelectedDU?.code || '';
@@ -527,10 +546,10 @@ function crResolveEnvChanges(envCode, snapshotFields) {
   crPerEnvMode.forEach(k=>changeKeys.add(k));
   changeKeys.forEach(k => { merged[k] = crResolveForEnv(k, envCode); });
 
-  // 如果 ArtifactVersion 有变更，自动同步 initDb 类字段的 URL tag
+  // 如果 ArtifactVersion 有变更且开启了自动同步，自动同步 initDb 类字段的 URL tag
   const newAV = merged['ArtifactVersion'];
   const origAV = (snapshotFields||{})['ArtifactVersion'];
-  if (newAV && String(newAV) !== String(origAV || '')) {
+  if (crAutoSyncInitDb && newAV && String(newAV) !== String(origAV || '')) {
     CR_INIT_DB_FIELDS.forEach(field => {
       if (changeKeys.has(field)) return;
       const current = (snapshotFields||{})[field];
@@ -592,7 +611,8 @@ function crStep4Preview() {
       <div class="cr-section"><div class="cr-section-title">变更内容</div>
         <div style="margin-bottom:8px"><strong>标题:</strong> ${escapeHtml(crTitle)}</div>
         <div style="margin-bottom:8px"><strong>部署单元:</strong> ${escapeHtml(crSelectedDU?.code||'')}</div>
-        <div style="margin-bottom:16px"><strong>蓝图:</strong> ${escapeHtml(crSelectedBP?.name||'')}</div>
+        <div style="margin-bottom:8px"><strong>蓝图:</strong> ${escapeHtml(crSelectedBP?.name||'')}</div>
+        <div style="margin-bottom:8px"><strong>initDb URL tag 自动同步:</strong> ${crAutoSyncInitDb?'<span style="color:#16a34a">已开启</span>':'<span style="color:#9ca3af">已关闭</span>'}</div>
         <div>${summary||'<span style="color:var(--text-muted)">无变更</span>'}${autoSummary?'<div style="margin-top:8px">'+autoSummary+'</div>':''}</div>
       </div>
       <div class="cr-section"><div class="cr-section-title">各环境变更预览</div>${envsHTML||'<div class="empty-state"><p>无环境数据</p></div>'}</div>`,
@@ -645,10 +665,10 @@ window.crSubmitRelease = async function() {
   const av = changes.ArtifactVersion;
   if (!av || (typeof av==='object' && Object.keys(av).length===0)) { toast('ArtifactVersion为必填项','error'); if (btn) { btn.disabled = false; btn.textContent = '确认创建发布'; } return; }
 
-  // initDb tag 自动同步：如果 ArtifactVersion 有变更且用户未手动修改 initDb 类字段，
+  // initDb tag 自动同步：如果开启了自动同步且 ArtifactVersion 有变更且用户未手动修改 initDb 类字段，
   // 自动将各环境 initDb/initDbAuth/initDbFinal 中的 URL tag 替换为新版本
   const avStr = typeof av === 'object' ? (av._default || Object.values(av)[0]) : av;
-  if (avStr) {
+  if (crAutoSyncInitDb && avStr) {
     CR_INIT_DB_FIELDS.forEach(field => {
       if (changes[field] !== undefined) return; // 用户已手动修改，跳过
       // 计算每个环境的自动更新值
