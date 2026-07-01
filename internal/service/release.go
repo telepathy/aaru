@@ -1,10 +1,12 @@
 package service
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"strings"
 	"time"
 
@@ -427,14 +429,22 @@ func (r *ReleaseService) applyChanges(release *model.Release, stage *model.Relea
 	// 无变更，直接 completed
 	if len(changes) == 0 {
 		stage.Status = "completed"
-		return r.store.DB().Save(stage).Error
+		if err := r.store.DB().Save(stage).Error; err != nil {
+			return err
+		}
+		r.firePostWebhook(release, stage)
+		return nil
 	}
 
 	// 解析该环境的具体变更值
 	envChanges := resolveForEnv(changes, stage.EnvCode)
 	if len(envChanges) == 0 {
 		stage.Status = "completed"
-		return r.store.DB().Save(stage).Error
+		if err := r.store.DB().Save(stage).Error; err != nil {
+			return err
+		}
+		r.firePostWebhook(release, stage)
+		return nil
 	}
 
 	stage.Status = "pushing"
@@ -467,7 +477,73 @@ func (r *ReleaseService) applyChanges(release *model.Release, stage *model.Relea
 	}
 
 	stage.Status = "completed"
-	return r.store.DB().Save(stage).Error
+	if err := r.store.DB().Save(stage).Error; err != nil {
+		return err
+	}
+	r.firePostWebhook(release, stage)
+	return nil
+}
+
+// firePostWebhook 在 stage 完成后异步调用节点配置的 PostWebhookURL，不阻塞主流程。
+func (r *ReleaseService) firePostWebhook(release *model.Release, stage *model.ReleaseStage) {
+	if stage.NodeID == nil || release.BlueprintID == nil {
+		return
+	}
+	bpNode, err := r.store.GetNode(*stage.NodeID)
+	if err != nil || bpNode.PostWebhookURL == "" {
+		return
+	}
+	go callPostWebhook(bpNode.PostWebhookURL, release, stage)
+}
+
+// substitutePlaceholders 替换 webhook URL 中的占位符
+func substitutePlaceholders(template string, release *model.Release, stage *model.ReleaseStage) string {
+	s := template
+	s = strings.ReplaceAll(s, "{du_code}", release.DeployUnitCode)
+	s = strings.ReplaceAll(s, "{env_code}", stage.EnvCode)
+	return s
+}
+
+// callPostWebhook 异步发送 POST 请求到目标 URL，携带 release + stage 信息
+func callPostWebhook(webhookURL string, release *model.Release, stage *model.ReleaseStage) {
+	url := substitutePlaceholders(webhookURL, release, stage)
+
+	payload := map[string]interface{}{
+		"release_id": release.ID,
+		"stage_id":   stage.ID,
+		"du_code":    release.DeployUnitCode,
+		"du_name":    release.DeployUnitName,
+		"env_code":   stage.EnvCode,
+		"env_name":   stage.EnvName,
+		"version":    release.Version,
+		"title":      release.Title,
+		"event":      "stage_completed",
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("postwebhook: marshal payload: %v", err)
+		return
+	}
+
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+
+	resp, err := client.Post(url, "application/json", strings.NewReader(string(body)))
+	if err != nil {
+		log.Printf("postwebhook: POST %s: %v", url, err)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		log.Printf("postwebhook: POST %s: status %d", url, resp.StatusCode)
+	} else {
+		log.Printf("postwebhook: POST %s: status %d", url, resp.StatusCode)
+	}
 }
 
 // activateChildren 激活子节点（所有父节点 completed 后）
