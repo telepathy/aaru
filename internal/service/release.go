@@ -84,7 +84,7 @@ func (r *ReleaseService) reloadRelease(release *model.Release) {
 	}
 }
 
-func (r *ReleaseService) CreateRelease(title, duCode string, createdByID uint, blueprintID uint, changes map[string]interface{}) (*model.Release, error) {
+func (r *ReleaseService) CreateRelease(title, duCode string, createdByID uint, blueprintID uint, changes map[string]interface{}, extraInfo string) (*model.Release, error) {
 	allEnvs, err := r.dmdb.ListEnvironments()
 	if err != nil {
 		return nil, fmt.Errorf("list environments: %w", err)
@@ -143,6 +143,7 @@ func (r *ReleaseService) CreateRelease(title, duCode string, createdByID uint, b
 		BlueprintID:    &blueprintID,
 		ChangesJSON:    changesJSON,
 		Changes:        changes,
+		ExtraInfo:      extraInfo,
 		Status:         "draft",
 		CreatedByID:    createdByID,
 	}
@@ -260,7 +261,7 @@ func (r *ReleaseService) BatchCreateRelease(title string, duCodes []string, crea
 			}
 		}
 
-		release, err := r.CreateRelease(title, duCode, createdByID, blueprintID, changes)
+		release, err := r.CreateRelease(title, duCode, createdByID, blueprintID, changes, "")
 		if err != nil {
 			return nil, fmt.Errorf("create release for %s: %w", duCode, err)
 		}

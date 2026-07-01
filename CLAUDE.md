@@ -46,7 +46,7 @@ web/                      — static frontend (templates/, js/, css/)
 1. **选择DU与蓝图** — side-by-side selection: left panel picks a deploy unit (filterable by silo/system), right panel picks a promotion blueprint. Both must be selected to proceed.
 2. **查看现状** — cross-environment comparison table showing only environments in the selected blueprint. Fields with differences across environments are highlighted.
 3. **定义变更** — define field changes (ArtifactVersion required). Each field row shows only blueprint environments. Supports unified mode (same value for all envs) and per-env mode (different values per environment). Additional fields selectable via searchable grouped modal.
-4. **预览** — per-environment preview of changes, filtered to blueprint environments only. Submits `{title, deploy_unit_code, blueprint_id, changes}` to `POST /api/releases`.
+4. **预览** — per-environment preview of changes, filtered to blueprint environments only. Submits `{title, deploy_unit_code, blueprint_id, changes, extra_info}` to `POST /api/releases`. `extra_info` is an optional multi-line text field (max 1024 chars) for supplementary notes.
 
 **Batch release wizard** (`web/js/pages/batch-release.js`): 3-step flow for upgrading multiple DUs at once:
 1. **选择DU与蓝图** — multi-select DUs + single blueprint

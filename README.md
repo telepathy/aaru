@@ -123,7 +123,7 @@ go run ./cmd/api
 ### 发布管理
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | /api/releases | 创建发布单（支持blueprint_id） |
+| POST | /api/releases | 创建发布单（支持blueprint_id、extra_info额外信息） |
 | POST | /api/batch-releases | 批量创建发布单（多DU共享版本） |
 | GET | /api/releases | 发布单列表（分页，支持creator筛选） |
 | GET | /api/releases/:id | 发布单详情 |

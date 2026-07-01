@@ -265,6 +265,7 @@ async function renderReleaseDetail(body, id) {
           <div class="release-meta-item"><span>创建者</span><span>${escapeHtml(r.created_by?.username||'')}</span></div>
           <div class="release-meta-item"><span>创建时间</span><span>${fmtTime(r.created_at)}</span></div>
           ${r.deprecated_at?`<div class="release-meta-item"><span>废弃时间</span><span>${fmtTime(r.deprecated_at)}</span></div>`:''}
+          ${r.extra_info?`<div class="release-meta-item"><span>额外信息</span><span style="white-space:pre-wrap;max-width:400px">${escapeHtml(r.extra_info)}</span></div>`:''}
         </div>
       </div>
       <div>${r.status==='draft'?'<button class="btn btn-primary" onclick="startRelease('+r.id+')">开始发布</button>':''}${r.status!=='deprecated'&&r.status!=='completed'&&r.status!=='draft'?'<button class="btn btn-warning" onclick="deprecateRelease('+r.id+')">废弃</button>':''}${r.status==='draft'&&(currentUser?.roles?.some(rl=>rl.name==='admin')||r.created_by?.id===currentUser?.id)?'<button class="btn btn-danger" onclick="deleteRelease('+r.id+')">删除</button>':''}${r.status==='deprecated'&&(currentUser?.roles?.some(rl=>rl.name==='admin')||r.created_by?.id===currentUser?.id)?(() => { const days = r.deprecated_at ? Math.max(0, 7 - Math.floor((Date.now() - new Date(r.deprecated_at).getTime()) / 86400000)) : 0; return days > 0 ? '<button class="btn btn-danger" onclick="deleteRelease('+r.id+')">删除（剩余'+days+'天）</button>' : '<button class="btn btn-sm" disabled>删除窗口已过期</button>'; })() : ''}</div>
