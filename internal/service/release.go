@@ -767,16 +767,7 @@ func (r *ReleaseService) GetRelease(id uint, userID uint) (*model.Release, error
 	if err != nil {
 		return nil, err
 	}
-	// Admin can view any release (follows CanDeploy/CanApprove pattern)
-	user, err := r.store.GetUserWithRoles(userID)
-	if err == nil && user != nil {
-		for _, role := range user.Roles {
-			if role.Name == "admin" {
-				return release, nil
-			}
-		}
-	}
-	if !r.permSvc.Can(userID, release.DeployUnitCode, "view") {
+	if !r.permSvc.CanView(userID, release.DeployUnitCode) {
 		return nil, fmt.Errorf("permission denied")
 	}
 	return release, nil

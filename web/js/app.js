@@ -32,7 +32,7 @@ function hashToPage(hash) {
   if (!path || path === 'releases') return { page: 'releases', param: null };
 
   const detailMatch = path.match(/^releases\/(\d+)$/);
-  if (detailMatch) return { page: 'release-detail', param: parseInt(detailMatch[1]) };
+  if (detailMatch) return { page: 'release-detail', param: parseInt(detailMatch[1], 10) };
 
   if (path === 'releases/create') return { page: 'create-release', param: null };
   if (path === 'releases/batch')  return { page: 'batch-release', param: null };
@@ -71,7 +71,7 @@ function renderPage(page, param) {
 
 // Public entry point: called from inline onclick handlers
 // Sets the hash; rendering happens via the hashchange event
-async function loadPage(page, param) {
+function loadPage(page, param) {
   const newHash = pageToHash(page, param);
   if (window.location.hash !== newHash) {
     window.location.hash = newHash; // synchronously fires hashchange → loadPageFromHash → renderPage
