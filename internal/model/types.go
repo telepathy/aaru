@@ -81,6 +81,7 @@ type Release struct {
 	Blueprint      *PromotionBlueprint    `gorm:"foreignKey:BlueprintID" json:"blueprint,omitempty"`
 	ChangesJSON    string                 `gorm:"type:text" json:"-"`
 	Changes        map[string]interface{} `gorm:"-" json:"changes,omitempty"`
+	ExtraInfo      string                 `gorm:"type:text" json:"extra_info,omitempty"`
 	Status         string                 `gorm:"size:32;default:draft;index" json:"status"`
 	DeprecatedAt   *time.Time             `json:"deprecated_at,omitempty"`
 	CreatedByID    uint                   `json:"created_by_id"`

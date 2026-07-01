@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 	"strconv"
+	"unicode/utf8"
 
 	"aaru/internal/service"
 	"github.com/gin-gonic/gin"
@@ -21,6 +22,7 @@ type CreateReleaseRequest struct {
 	DeployUnitCode string                 `json:"deploy_unit_code" binding:"required"`
 	BlueprintID    uint                   `json:"blueprint_id" binding:"required"`
 	Changes        map[string]interface{} `json:"changes"`
+	ExtraInfo      string                 `json:"extra_info"`
 }
 
 func (h *ReleaseHandler) CreateRelease(c *gin.Context) {
@@ -33,10 +35,14 @@ func (h *ReleaseHandler) CreateRelease(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "blueprint_id is required"})
 		return
 	}
+	if utf8.RuneCountInString(req.ExtraInfo) > 1024 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "extra_info exceeds 1024 characters"})
+		return
+	}
 	userID := c.GetUint("user_id")
 	release, err := h.releaseService.CreateRelease(
 		req.Title, req.DeployUnitCode, userID,
-		req.BlueprintID, req.Changes,
+		req.BlueprintID, req.Changes, req.ExtraInfo,
 	)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
