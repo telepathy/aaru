@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -496,17 +497,25 @@ func (r *ReleaseService) firePostWebhook(release *model.Release, stage *model.Re
 	go callPostWebhook(bpNode.PostWebhookURL, release, stage)
 }
 
+// postWebhookClient 复用的 HTTP 客户端，避免每次调用创建连接池
+var postWebhookClient = &http.Client{
+	Timeout: 10 * time.Second,
+	Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	},
+}
+
 // substitutePlaceholders 替换 webhook URL 中的占位符
 func substitutePlaceholders(template string, release *model.Release, stage *model.ReleaseStage) string {
 	s := template
-	s = strings.ReplaceAll(s, "{du_code}", release.DeployUnitCode)
-	s = strings.ReplaceAll(s, "{env_code}", stage.EnvCode)
+	s = strings.ReplaceAll(s, "{du_code}", url.QueryEscape(release.DeployUnitCode))
+	s = strings.ReplaceAll(s, "{env_code}", url.QueryEscape(stage.EnvCode))
 	return s
 }
 
 // callPostWebhook 异步发送 POST 请求到目标 URL，携带 release + stage 信息
 func callPostWebhook(webhookURL string, release *model.Release, stage *model.ReleaseStage) {
-	url := substitutePlaceholders(webhookURL, release, stage)
+	targetURL := substitutePlaceholders(webhookURL, release, stage)
 
 	payload := map[string]interface{}{
 		"release_id": release.ID,
@@ -516,6 +525,8 @@ func callPostWebhook(webhookURL string, release *model.Release, stage *model.Rel
 		"env_code":   stage.EnvCode,
 		"env_name":   stage.EnvName,
 		"version":    release.Version,
+		"silo_code":  release.SiloCode,
+		"silo_name":  release.SiloName,
 		"title":      release.Title,
 		"event":      "stage_completed",
 	}
@@ -526,24 +537,13 @@ func callPostWebhook(webhookURL string, release *model.Release, stage *model.Rel
 		return
 	}
 
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		},
-	}
-
-	resp, err := client.Post(url, "application/json", strings.NewReader(string(body)))
+	resp, err := postWebhookClient.Post(targetURL, "application/json", strings.NewReader(string(body)))
 	if err != nil {
-		log.Printf("postwebhook: POST %s: %v", url, err)
+		log.Printf("postwebhook: POST %s: %v", targetURL, err)
 		return
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		log.Printf("postwebhook: POST %s: status %d", url, resp.StatusCode)
-	} else {
-		log.Printf("postwebhook: POST %s: status %d", url, resp.StatusCode)
-	}
+	log.Printf("postwebhook: POST %s: status %d", targetURL, resp.StatusCode)
 }
 
 // activateChildren 激活子节点（所有父节点 completed 后）
