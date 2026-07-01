@@ -256,7 +256,7 @@ async function renderReleaseDetail(body, id) {
 
     body.innerHTML = `<div class="release-detail-header">
       <div class="release-info">
-        <h2>${escapeHtml(r.title)}</h2>
+        <h2>${escapeHtml(r.title)}<button class="btn btn-sm btn-secondary" onclick="copyReleaseLink(${r.id})" title="复制分享链接" style="margin-left:12px;font-size:12px"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-right:4px"><path d="M5 2H3a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V9" stroke="currentColor" stroke-width="1.2" fill="none"/><path d="M6 10l5-9 3 2-6 8" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>复制链接</button></h2>
         <div class="release-meta">
           <div class="release-meta-item"><span>部署单元</span><span>${escapeHtml(r.deploy_unit_code||'')}</span></div>
           <div class="release-meta-item"><span>应用名称</span><span>${escapeHtml(r.deploy_unit_name||'')}</span></div>
@@ -503,6 +503,30 @@ async function batchDeleteReleases() {
   loadPage('releases');
 }
 
+// Copy release share link to clipboard
+async function copyReleaseLink(releaseId) {
+  const url = window.location.origin + '/#/releases/' + releaseId;
+  try {
+    await navigator.clipboard.writeText(url);
+    toast('链接已复制到剪贴板', 'success');
+  } catch(e) {
+    // Fallback for older browsers or non-HTTPS contexts
+    const textarea = document.createElement('textarea');
+    textarea.value = url;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+      document.execCommand('copy');
+      toast('链接已复制到剪贴板', 'success');
+    } catch(e2) {
+      toast('复制失败，请手动复制链接', 'error');
+    }
+    document.body.removeChild(textarea);
+  }
+}
+
 // Expose for inline onclick
 window.renderReleaseList = renderReleaseList;
 window.startRelease = startRelease;
@@ -515,5 +539,6 @@ window.toggleAllReleases = toggleAllReleases;
 window.updateReleaseBatchBar = updateReleaseBatchBar;
 window.batchDeprecateReleases = batchDeprecateReleases;
 window.batchDeleteReleases = batchDeleteReleases;
+window.copyReleaseLink = copyReleaseLink;
 
 export { renderReleaseList, renderReleaseDetail };

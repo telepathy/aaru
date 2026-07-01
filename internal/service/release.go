@@ -762,8 +762,15 @@ func hasRole(user *model.User, roleName string) bool {
 	return false
 }
 
-func (r *ReleaseService) GetRelease(id uint) (*model.Release, error) {
-	return r.store.GetReleaseWithStages(id)
+func (r *ReleaseService) GetRelease(id uint, userID uint) (*model.Release, error) {
+	release, err := r.store.GetReleaseWithStages(id)
+	if err != nil {
+		return nil, err
+	}
+	if !r.permSvc.CanView(userID, release.DeployUnitCode) {
+		return nil, fmt.Errorf("permission denied")
+	}
+	return release, nil
 }
 
 func (r *ReleaseService) GetPendingApprovals(userID uint) ([]model.ReleaseStage, error) {

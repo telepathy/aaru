@@ -138,3 +138,17 @@ func (p *PermissionService) CanApprove(userID uint, siloCode, envCode string) bo
 	}
 	return isAllowed(user.AllowedSilos, siloCode) && isAllowed(user.AllowedEnvs, envCode)
 }
+
+// CanView 检查用户是否可以查看指定部署单元的发布
+// admin 跳过检查；其他角色需要 view 权限
+func (p *PermissionService) CanView(userID uint, deployUnitCode string) bool {
+	user, err := p.store.GetUserWithRoles(userID)
+	if err != nil || user == nil {
+		return false
+	}
+	// admin 跳过
+	if p.hasRole(user, "admin") {
+		return true
+	}
+	return p.Can(userID, deployUnitCode, "view")
+}
