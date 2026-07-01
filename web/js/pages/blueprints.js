@@ -47,7 +47,7 @@ async function loadPageBlueprintEditor(bpId) {
 
   // Init DAG state
   if (bp) {
-    dagState.nodes = (bp.nodes||[]).map(n=> ({...n, id:n.id, env_code:n.env_code, env_name:n.env_name||n.env_code, pos_x:n.pos_x, pos_y:n.pos_y, gate_type:n.gate_type||'manual', webhook_token:n.webhook_token||''}));
+    dagState.nodes = (bp.nodes||[]).map(n=> ({...n, id:n.id, env_code:n.env_code, env_name:n.env_name||n.env_code, pos_x:n.pos_x, pos_y:n.pos_y, gate_type:n.gate_type||'manual', webhook_token:n.webhook_token||'', post_webhook_url:n.post_webhook_url||''}));
     dagState.edges = (bp.edges||[]).map(e=>({...e, id:e.id, from_node_id:e.from_node_id, to_node_id:e.to_node_id}));
     dagState.nextId = Math.max(100, ...dagState.nodes.map(n=>n.id)) + 1;
     // 记录原始结构，用于保存时检测变化
@@ -195,6 +195,7 @@ function updateNodeConfig() {
     </select></div>
     ${n.gate_type==='manual'?`<div class="form-group"><span style="font-size:12px;color:var(--text-muted)">需要用户拥有 approve 权限，且 allowed_silos 包含该发布单所属 silo，allowed_envs 包含此环境。</span></div>`:''}${n.gate_type==='auto'?`<div class="form-group"><span style="font-size:12px;color:#059669">该阶段父环境审批通过后自动晋级，无需人工干预。</span></div>`:''}
     ${n.gate_type==='api_hook'?`<div class="form-group"><label class="form-label">Webhook URL（外部系统调用此地址晋级）</label><code style="display:block;padding:8px;background:#f5f5f4;border-radius:4px;font-size:11px;word-break:break-all;margin-bottom:8px">${webhookUrl}</code><span style="font-size:11px;color:var(--text-muted)">发布启动后，将 __STAGE_ID__ 替换为实际的stage id。外部系统调用此URL即可自动将该阶段从pending推进到in_progress。</span></div>`:''}
+    <div class="form-group"><label class="form-label">完成后回调 URL（可选）</label><input class="form-control" type="text" value="${escapeHtml(n.post_webhook_url||'')}" placeholder="https://example.com/callback?du={du_code}" onchange="updateNodeProp('post_webhook_url',this.value)"><span style="font-size:11px;color:var(--text-muted)">stage 完成后发送 POST 请求。占位符：{du_code}、{env_code}</span></div>
     <button class="btn btn-danger btn-sm" onclick="deleteDagNode(${n.id})" style="margin-top:8px">删除此节点</button>`;
 }
 
@@ -214,7 +215,7 @@ window.updateNodeProp = function(key, val) {
 };
 
 window.addDagNode = function() {
-  const n = { id: dagState.nextId++, env_code: '', env_name: '新节点', pos_x: dagState.nodes.length*110+30, pos_y: dagState.nodes.length*45+50, gate_type: 'manual', webhook_token: '' };
+  const n = { id: dagState.nextId++, env_code: '', env_name: '新节点', pos_x: dagState.nodes.length*110+30, pos_y: dagState.nodes.length*45+50, gate_type: 'manual', webhook_token: '', post_webhook_url: '' };
   dagState.nodes.push(n);
   dagState.selectedNode = n.id;
   renderDAG();
@@ -396,7 +397,7 @@ window.saveBlueprint = async function(id) {
   const payload = {
     name,
     description: document.getElementById('bp-desc').value.trim(),
-    nodes: dagState.nodes.map(n=>({ id:n.id, env_code:n.env_code, env_name:n.env_name, pos_x:n.pos_x, pos_y:n.pos_y, gate_type:n.gate_type, webhook_token:n.webhook_token||'' })),
+    nodes: dagState.nodes.map(n=>({ id:n.id, env_code:n.env_code, env_name:n.env_name, pos_x:n.pos_x, pos_y:n.pos_y, gate_type:n.gate_type, webhook_token:n.webhook_token||'', post_webhook_url:n.post_webhook_url||'' })),
     edges: dagState.edges.map(e=>({ from_node_id:e.from_node_id, to_node_id:e.to_node_id }))
   };
   try {

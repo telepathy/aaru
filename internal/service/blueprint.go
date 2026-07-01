@@ -160,6 +160,7 @@ func (b *BlueprintService) updateNodesIncremental(bpID uint, oldNodes []model.Bl
 			existing.PositionY = n.PositionY
 			existing.GateType = n.GateType
 			existing.WebhookToken = n.WebhookToken
+			existing.PostWebhookURL = n.PostWebhookURL
 			if err := b.store.SaveNode(existing); err != nil {
 				return nil, err
 			}

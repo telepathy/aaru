@@ -53,8 +53,9 @@ type BlueprintNode struct {
 	EnvName       string    `gorm:"size:128" json:"env_name"`
 	PositionX     int       `json:"pos_x"`
 	PositionY     int       `json:"pos_y"`
-	GateType     string `gorm:"size:32;default:manual" json:"gate_type"` // manual, api_hook, auto
-	WebhookToken string `gorm:"size:64" json:"webhook_token,omitempty"` // 系统自动生成
+	GateType        string `gorm:"size:32;default:manual" json:"gate_type"`                    // manual, api_hook, auto
+	WebhookToken    string `gorm:"size:64" json:"webhook_token,omitempty"`                     // 系统自动生成
+	PostWebhookURL  string `gorm:"size:512" json:"post_webhook_url,omitempty"`                 // 完成后回调URL，支持 {du_code} {env_code} 占位符
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }

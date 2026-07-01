@@ -297,6 +297,14 @@ func (s *DBStore) GetBlueprintNodes(bpID uint) ([]model.BlueprintNode, error) {
 	return nodes, err
 }
 
+func (s *DBStore) GetNode(id uint) (*model.BlueprintNode, error) {
+	var n model.BlueprintNode
+	if err := s.db.First(&n, id).Error; err != nil {
+		return nil, err
+	}
+	return &n, nil
+}
+
 // Edge operations
 func (s *DBStore) CreateEdges(edges []model.BlueprintEdge) error {
 	if len(edges) == 0 {
