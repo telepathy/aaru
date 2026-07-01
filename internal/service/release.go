@@ -762,8 +762,24 @@ func hasRole(user *model.User, roleName string) bool {
 	return false
 }
 
-func (r *ReleaseService) GetRelease(id uint) (*model.Release, error) {
-	return r.store.GetReleaseWithStages(id)
+func (r *ReleaseService) GetRelease(id uint, userID uint) (*model.Release, error) {
+	release, err := r.store.GetReleaseWithStages(id)
+	if err != nil {
+		return nil, err
+	}
+	// Admin can view any release (follows CanDeploy/CanApprove pattern)
+	user, err := r.store.GetUserWithRoles(userID)
+	if err == nil && user != nil {
+		for _, role := range user.Roles {
+			if role.Name == "admin" {
+				return release, nil
+			}
+		}
+	}
+	if !r.permSvc.Can(userID, release.DeployUnitCode, "view") {
+		return nil, fmt.Errorf("permission denied")
+	}
+	return release, nil
 }
 
 func (r *ReleaseService) GetPendingApprovals(userID uint) ([]model.ReleaseStage, error) {

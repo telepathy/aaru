@@ -103,8 +103,13 @@ func (h *ReleaseHandler) GetRelease(c *gin.Context) {
 	if !ok {
 		return
 	}
-	release, err := h.releaseService.GetRelease(id)
+	userID := c.GetUint("user_id")
+	release, err := h.releaseService.GetRelease(id, userID)
 	if err != nil {
+		if err.Error() == "permission denied" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "permission denied"})
+			return
+		}
 		c.JSON(http.StatusNotFound, gin.H{"error": "release not found"})
 		return
 	}
