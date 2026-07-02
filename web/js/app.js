@@ -99,7 +99,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   loadPageFromHash();
 
   // 监听 hash 变化，支持浏览器前进/后退
-  window.addEventListener('hashchange', loadPageFromHash);
+  // 忽略裸 #（来自 <a href="#"> 点击），只响应 #/ 开头的业务路由
+  window.addEventListener('hashchange', () => {
+    if (!window.location.hash || window.location.hash === '#') return;
+    loadPageFromHash();
+  });
 
   // 全局事件委托：点击 .diff-field-link 打开 diff 模态框
   document.addEventListener('click', e => {
